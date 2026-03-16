@@ -3,6 +3,21 @@ import { BrowserRouter as Router, Routes, Route, useParams } from 'react-router-
 import { supabase, Book, Chapter } from './lib/supabase';
 import BookReader from './components/BookReader';
 
+const TRACK_URL = 'https://uhzncrsbytxwdlmldwqf.supabase.co/functions/v1/track-story-view';
+
+// Fire-and-forget — never blocks the reading experience
+async function trackView(slug: string): Promise<void> {
+  try {
+    await fetch(TRACK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+  } catch {
+    // Silent fail
+  }
+}
+
 function BookPage() {
   const { slug } = useParams<{ slug: string }>();
   const [book, setBook] = useState<Book | null>(null);
@@ -44,6 +59,9 @@ function BookPage() {
       setBook(bookData);
       trackView(bookSlug);
 
+      // Track the view — fire and forget, does not block loading
+      trackView(bookSlug);
+
       // Fetch chapters
       const { data: chaptersData, error: chaptersError } = await supabase
         .from('chapters')
@@ -65,7 +83,6 @@ function BookPage() {
             .from('pages')
             .select('*', { count: 'exact', head: true })
             .eq('chapter_id', chapter.id);
-
           return { chapter, hasPages: (count || 0) > 0 };
         })
       );
