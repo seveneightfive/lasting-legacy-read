@@ -42,6 +42,7 @@ function BookPage() {
 
       console.log('Book data:', bookData);
       setBook(bookData);
+      trackView(bookSlug);
 
       // Fetch chapters
       const { data: chaptersData, error: chaptersError } = await supabase
