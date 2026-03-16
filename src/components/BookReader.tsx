@@ -50,23 +50,31 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   }, [currentState, book.user]);
 
   const fetchPages = async (chapterId: number) => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
+  setLoading(true);
+  try {
+    const [pagesResult, galleryResult] = await Promise.all([
+      supabase
         .from('pages')
         .select('*')
         .eq('chapter_id', chapterId)
-        .order('sort_order', { ascending: true });
+        .order('sort_order', { ascending: true }),
+      supabase
+        .from('gallery')
+        .select('*')
+        .eq('chapter_id', chapterId)
+        .order('sort_order', { ascending: true })
+    ]);
 
-      if (error) throw error;
-      setPages(data || []);
-      setCurrentPageIndex(0);
-    } catch (error) {
-      console.error('Error fetching pages:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (pagesResult.error) throw pagesResult.error;
+    setPages(pagesResult.data || []);
+    setChapterGalleryItems(galleryResult.data || []);
+    setCurrentPageIndex(0);
+  } catch (error) {
+    console.error('Error fetching pages:', error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const fetchGalleryItems = async () => {
     setLoading(true);
@@ -352,15 +360,16 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       )}
 
       {currentState === 'chapter-content' && currentChapter && pages.length > 0 && (
-        <ChapterReader
-          chapter={currentChapter}
-          page={pages[currentPageIndex]}
-          pageNumber={currentPageIndex + 1}
-          totalPages={pages.length}
-          onNext={handleNext}
-          onPrevious={handlePrevious}
-        />
-      )}
+  <ChapterReader
+    chapter={currentChapter}
+    page={pages[currentPageIndex]}
+    pageNumber={currentPageIndex + 1}
+    totalPages={pages.length}
+    galleryItems={chapterGalleryItems}
+    onNext={handleNext}
+    onPrevious={handlePrevious}
+  />
+)}
 
       {currentState === 'chapter-gallery' && currentChapter && (
         <ChapterSpecificGallery
