@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { marked } from 'marked';
-import { Chapter, Page } from '../lib/supabase';
+import { Chapter, Page, GalleryItem } from '../lib/supabase';
 import { useIsDesktop } from '../hooks/useMediaQuery';
 
 interface ChapterReaderProps {
@@ -9,8 +9,75 @@ interface ChapterReaderProps {
   page: Page;
   pageNumber: number;
   totalPages: number;
+  galleryItems: GalleryItem[];  // ← ADDED: gallery items for this chapter
   onNext: () => void;
   onPrevious: () => void;
+}
+
+// Render page content — handles both HTML (from new editor) and markdown (from Glide)
+function renderContent(content: string): string {
+  if (!content) return '';
+  const trimmed = content.trim();
+  // If content is already HTML, return as-is
+  if (trimmed.startsWith('<')) return trimmed;
+  // Otherwise parse as markdown
+  return marked.parse(content) as string;
+}
+
+// Get gallery images linked to a specific page
+function getPageImages(galleryItems: GalleryItem[], pageId: number): GalleryItem[] {
+  return galleryItems
+    .filter(g => g.page_id === pageId)
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+}
+
+// Render inline images for a page
+function PageImages({ images }: { images: GalleryItem[] }) {
+  if (!images.length) return null;
+
+  if (images.length === 1) {
+    const img = images[0];
+    return (
+      <figure className="my-6">
+        <img
+          src={img.image_url}
+          alt={img.image_caption || ''}
+          className="w-full rounded-lg shadow-md object-cover"
+          loading="lazy"
+        />
+        {img.image_caption && (
+          <figcaption className="text-sm text-slate-500 italic font-lora text-center mt-2">
+            {img.image_caption}
+          </figcaption>
+        )}
+      </figure>
+    );
+  }
+
+  // Multiple images — grid layout
+  const gridClass = images.length === 2
+    ? 'grid grid-cols-2 gap-3'
+    : 'grid grid-cols-2 md:grid-cols-3 gap-3';
+
+  return (
+    <div className={`${gridClass} my-6`}>
+      {images.map(img => (
+        <figure key={img.id} className="m-0">
+          <img
+            src={img.image_url}
+            alt={img.image_caption || ''}
+            className="w-full rounded-lg shadow-sm object-cover aspect-[4/3]"
+            loading="lazy"
+          />
+          {img.image_caption && (
+            <figcaption className="text-xs text-slate-500 italic font-lora text-center mt-1">
+              {img.image_caption}
+            </figcaption>
+          )}
+        </figure>
+      ))}
+    </div>
+  );
 }
 
 export default function ChapterReader({
@@ -18,6 +85,7 @@ export default function ChapterReader({
   page,
   pageNumber,
   totalPages,
+  galleryItems,
   onNext,
   onPrevious
 }: ChapterReaderProps) {
@@ -25,23 +93,13 @@ export default function ChapterReader({
   const useSplitScreen = isDesktop && totalPages >= 2;
   const [slideDirection, setSlideDirection] = useState<'left' | 'right'>('right');
 
-  useEffect(() => {
-    const handleNext = () => setSlideDirection('left');
-    const handlePrev = () => setSlideDirection('right');
+  const pageImages = getPageImages(galleryItems, page.id);
+  const contentHtml = renderContent(page.content || '');
 
-    return () => {};
-  }, []);
+  const handleNextClick = () => { setSlideDirection('left'); onNext(); };
+  const handlePreviousClick = () => { setSlideDirection('right'); onPrevious(); };
 
-  const handleNextClick = () => {
-    setSlideDirection('left');
-    onNext();
-  };
-
-  const handlePreviousClick = () => {
-    setSlideDirection('right');
-    onPrevious();
-  };
-
+  // ── MOBILE / SINGLE COLUMN ────────────────────────────────────
   if (!useSplitScreen) {
     return (
       <motion.div
@@ -58,6 +116,7 @@ export default function ChapterReader({
             </p>
           </div>
 
+          {/* Header image from pages.image_url */}
           {page.image_url && (
             <div className="mb-8">
               <img
@@ -83,9 +142,7 @@ export default function ChapterReader({
             <blockquote className="text-xl font-lora italic text-slate-700 mb-8 pl-6 border-l-4 border-slate-300 leading-body-relaxed quote-tracking">
               <div
                 className="markdown-body"
-                dangerouslySetInnerHTML={{
-                  __html: marked.parse(page.quote)
-                }}
+                dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }}
               />
               {page.quote_attribute && (
                 <footer className="text-base text-slate-600 mt-4 not-italic">
@@ -95,14 +152,16 @@ export default function ChapterReader({
             </blockquote>
           )}
 
+          {/* Main content */}
           {page.content && (
             <div
-              className="markdown-body font-lora text-slate-800 mb-12 leading-body-relaxed body-tracking"
-              dangerouslySetInnerHTML={{
-                __html: marked.parse(page.content)
-              }}
+              className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking"
+              dangerouslySetInnerHTML={{ __html: contentHtml }}
             />
           )}
+
+          {/* ← NEW: Inline gallery images linked to this page */}
+          <PageImages images={pageImages} />
 
           <div className="flex justify-between items-center pt-8 border-t border-slate-200">
             <button
@@ -111,11 +170,9 @@ export default function ChapterReader({
             >
               ← Previous
             </button>
-
             <span className="text-slate-500 text-sm font-avenir">
               Page {pageNumber} of {totalPages}
             </span>
-
             <button
               onClick={handleNextClick}
               className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
@@ -128,8 +185,10 @@ export default function ChapterReader({
     );
   }
 
+  // ── DESKTOP SPLIT SCREEN ──────────────────────────────────────
   return (
     <div className="fixed inset-0 flex bg-white">
+      {/* LEFT: Image panel */}
       <div className="w-1/2 h-screen flex flex-col bg-slate-50 overflow-hidden relative">
         <div className="px-12 pt-12 pb-6">
           <p className="text-slate-500 text-sm font-avenir mb-2">
@@ -144,6 +203,7 @@ export default function ChapterReader({
 
         <div className="flex-1 flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
+            {/* Show page image, or first gallery image, or subtitle card, or placeholder */}
             {page.image_url ? (
               <motion.div
                 key={`image-${pageNumber}`}
@@ -163,6 +223,42 @@ export default function ChapterReader({
                     <p className="text-sm text-slate-600 mt-4 italic font-lora text-center">
                       {page.image_caption}
                     </p>
+                  )}
+                </div>
+              </motion.div>
+            ) : pageImages.length > 0 ? (
+              /* ← NEW: Show first gallery image on the left panel */
+              <motion.div
+                key={`gallery-${pageNumber}`}
+                initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
+                transition={{ duration: 0.6, ease: 'easeInOut' }}
+                className="w-full h-full flex flex-col items-center justify-center px-12"
+              >
+                <div className="max-w-2xl w-full">
+                  <img
+                    src={pageImages[0].image_url}
+                    alt={pageImages[0].image_caption || ''}
+                    className="w-full rounded-lg shadow-lg object-contain max-h-[60vh]"
+                  />
+                  {pageImages[0].image_caption && (
+                    <p className="text-sm text-slate-600 mt-4 italic font-lora text-center">
+                      {pageImages[0].image_caption}
+                    </p>
+                  )}
+                  {/* Show remaining images in a small strip below */}
+                  {pageImages.length > 1 && (
+                    <div className="flex gap-2 mt-4 justify-center">
+                      {pageImages.slice(1).map(img => (
+                        <img
+                          key={img.id}
+                          src={img.image_url}
+                          alt={img.image_caption || ''}
+                          className="w-20 h-20 object-cover rounded-md shadow-sm"
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
               </motion.div>
@@ -195,8 +291,12 @@ export default function ChapterReader({
         </div>
       </div>
 
+      {/* RIGHT: Text panel */}
       <div className="w-1/2 h-screen flex flex-col items-center justify-center relative">
-        <div className="w-full max-w-3xl mx-auto overflow-y-auto px-12" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+        <div
+          className="w-full max-w-3xl mx-auto overflow-y-auto px-12"
+          style={{ maxHeight: 'calc(100vh - 120px)' }}
+        >
           {page.subtitle && (
             <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
               {page.subtitle}
@@ -207,9 +307,7 @@ export default function ChapterReader({
             <blockquote className="text-xl font-lora italic text-slate-700 mb-8 pl-6 border-l-4 border-slate-300 leading-body-relaxed quote-tracking">
               <div
                 className="markdown-body"
-                dangerouslySetInnerHTML={{
-                  __html: marked.parse(page.quote)
-                }}
+                dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }}
               />
               {page.quote_attribute && (
                 <footer className="text-base text-slate-600 mt-4 not-italic">
@@ -221,11 +319,14 @@ export default function ChapterReader({
 
           {page.content && (
             <div
-              className="markdown-body font-lora text-slate-800 mb-12 leading-body-relaxed body-tracking"
-              dangerouslySetInnerHTML={{
-                __html: marked.parse(page.content)
-              }}
+              className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking"
+              dangerouslySetInnerHTML={{ __html: contentHtml }}
             />
+          )}
+
+          {/* ← NEW: Additional gallery images (2nd and beyond) shown inline in text panel */}
+          {pageImages.length > 1 && (
+            <PageImages images={pageImages.slice(1)} />
           )}
         </div>
 
@@ -237,11 +338,9 @@ export default function ChapterReader({
             >
               ← Previous
             </button>
-
             <span className="text-slate-500 text-sm font-avenir">
               Page {pageNumber} of {totalPages}
             </span>
-
             <button
               onClick={handleNextClick}
               className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
@@ -254,3 +353,4 @@ export default function ChapterReader({
     </div>
   );
 }
+
