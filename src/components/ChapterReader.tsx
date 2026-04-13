@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { marked } from 'marked';
 import { Chapter, Page, GalleryItem } from '../lib/supabase';
 import { useIsDesktop } from '../hooks/useMediaQuery';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface ChapterReaderProps {
   chapter: Chapter;
@@ -92,6 +93,14 @@ export default function ChapterReader({
 
   const handleNextClick = () => { setSlideDirection('left'); onNext(); };
   const handlePreviousClick = () => { setSlideDirection('right'); onPrevious(); };
+
+const scrollRef = useRef<HTMLDivElement>(null);
+
+useEffect(() => {
+  if (scrollRef.current) {
+    scrollRef.current.scrollTop = 0;
+  }
+}, [pageNumber]);
 
   // ── MOBILE / SINGLE COLUMN ────────────────────────────────────
   if (!useSplitScreen) {
@@ -279,6 +288,7 @@ export default function ChapterReader({
 
         {/* Scrollable content area */}
 <div
+  ref={scrollRef}
   className="flex-1 overflow-y-auto px-12 flex flex-col"
   style={{ paddingBottom: '160px' }}
 >
