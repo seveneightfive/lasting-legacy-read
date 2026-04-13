@@ -278,11 +278,11 @@ export default function ChapterReader({
       <div className="w-[55%] h-screen flex flex-col relative">
 
         {/* Scrollable content area */}
-        <div
-          className="flex-1 overflow-y-auto px-12 py-12 flex flex-col justify-center"
-          style={{ paddingBottom: '160px' }}
-        >
-          <div className="max-w-2xl mx-auto w-full">
+<div
+  className="flex-1 overflow-y-auto px-12 flex flex-col"
+  style={{ paddingBottom: '160px' }}
+>
+  <div className="max-w-2xl mx-auto w-full" style={{ marginTop: 'max(20vh, 60px)' }}>
             {page.subtitle && (
               <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
                 {page.subtitle}
