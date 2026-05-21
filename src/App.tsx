@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams } from 'react-router-dom';
 import { supabase, Book, Chapter } from './lib/supabase';
 import BookReader from './components/BookReader';
+import EditorPage from './components/editor/EditorPage';
 
 const TRACK_URL = 'https://uhzncrsbytxwdlmldwqf.supabase.co/functions/v1/track-story-view';
 
@@ -57,9 +58,6 @@ function BookPage() {
 
       console.log('Book data:', bookData);
       setBook(bookData);
-      trackView(bookSlug);
-
-      // Track the view — fire and forget, does not block loading
       trackView(bookSlug);
 
       // Fetch chapters
@@ -146,6 +144,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/book/:slug" element={<BookPage />} />
+        <Route path="/book/:slug/edit" element={<EditorPage />} />
       </Routes>
     </Router>
   );
