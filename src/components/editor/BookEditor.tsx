@@ -24,32 +24,29 @@ interface BookEditorProps {
  *
  *   cover → dedication → intro → chapter-title → page → page → chapter-title → …
  *
- * One state at a time, with a TOC drawer for jumping around and prev/next
- * arrows for sequential editing. Each state has its own split-screen layout.
+ * The top bar shows context-specific breadcrumbs only for views that don't
+ * already display their own heading (Intro, Page). Cover/Dedication/ChapterTitle
+ * own their visual heading internally and keep the top bar minimal.
  */
 export default function BookEditor({ book, chapters: initialChapters, pin, onExit }: BookEditorProps) {
-  // ── Editable state (local) ─────────────────────────────────────
+  // ── Editable state ─────────────────────────────────────────────
   const [bookState, setBookState] = useState<Book>(book);
   const [chapters, setChapters] = useState<Chapter[]>(initialChapters);
 
-  // Pages cached per chapter ID (load lazily as user navigates)
   const [pagesByChapter, setPagesByChapter] = useState<Map<number, Page[]>>(new Map());
   const [galleryByPage, setGalleryByPage] = useState<Map<number, GalleryItem[]>>(new Map());
 
-  // Current edit state
   const [current, setCurrent] = useState<EditorState>({ kind: 'cover' });
   const [tocOpen, setTocOpen] = useState(false);
 
-  // ── Build TOC tree ─────────────────────────────────────────────
   const toc = useMemo(
     () => buildToc(bookState, chapters, pagesByChapter),
     [bookState, chapters, pagesByChapter]
   );
   const allStates = useMemo(() => flattenStates(toc), [toc]);
 
-  // ── Eagerly load pages for the first chapter, then on demand ──
+  // Load first chapter's pages eagerly for TOC
   useEffect(() => {
-    // Load pages for the chapter we'd display first, so TOC is populated
     const firstChapter = chapters[0];
     if (firstChapter && !pagesByChapter.has(firstChapter.id)) {
       void loadPages(firstChapter.id);
@@ -87,7 +84,6 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     }
   }, []);
 
-  // When we navigate to a chapter or page, ensure its data is loaded
   useEffect(() => {
     if (current.kind === 'chapter-title' || current.kind === 'page') {
       const chapter = chapters[current.chapterIndex];
@@ -105,7 +101,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     }
   }, [current, chapters, pagesByChapter, galleryByPage, loadPages, loadGallery]);
 
-  // ── Save helpers ───────────────────────────────────────────────
+  // ── Revisions ──────────────────────────────────────────────────
   const logRevision = useCallback(async (params: {
     page_id?: number;
     chapter_id?: number;
@@ -121,10 +117,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     }
   }, [pin]);
 
-  // ── Generic per-state autosaves ────────────────────────────────
-  // Rather than 11 individual hooks, we maintain a "dirty payload" per state
-  // and one autosave hook that flushes it. Cleaner state, fewer surprises.
-
+  // ── Single-payload autosave ────────────────────────────────────
   type DirtyPayload =
     | { kind: 'book';    changes: Partial<Book> }
     | { kind: 'chapter'; chapterId: number; changes: Partial<Chapter> }
@@ -179,10 +172,10 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
       setDirty(null);
     },
     delay: 1500,
-    resetKey: stateKey(current),  // flush on state change
+    resetKey: stateKey(current),
   });
 
-  // ── Update helpers used by the views ───────────────────────────
+  // ── Update helpers ─────────────────────────────────────────────
   const updateBook = (patch: Partial<Book>) => {
     setBookState((prev) => ({ ...prev, ...patch }));
     setDirty((prev) => {
@@ -216,7 +209,6 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     });
   };
 
-  // ── Add to gallery (called from the editor toolbar's image button) ──
   const handleAddToGallery = useCallback(async (
     pageId: number, chapterId: number, imageUrl: string, caption?: string,
   ) => {
@@ -238,13 +230,12 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     await loadGallery(pageId);
   }, [galleryByPage, loadGallery]);
 
-  // ── Exit: flush + leave ────────────────────────────────────────
   const handleExit = async () => {
     await autosave.flush();
     onExit();
   };
 
-  // ── Render the current view ────────────────────────────────────
+  // ── Render current view ────────────────────────────────────────
   const view = renderCurrentView();
 
   function renderCurrentView(): React.ReactNode {
@@ -293,7 +284,29 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     return <NotFound />;
   }
 
-  // ── Sequential nav ─────────────────────────────────────────────
+  // ── Top-bar breadcrumb ─────────────────────────────────────────
+  // Only shown for views that don't already display their own heading.
+  function renderBreadcrumb(): React.ReactNode {
+    if (current.kind === 'intro') {
+      return <BreadcrumbPill>Introduction</BreadcrumbPill>;
+    }
+    if (current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      const pages = pagesByChapter.get(chapter?.id) ?? [];
+      if (!chapter || pages.length === 0) return null;
+      return (
+        <BreadcrumbPill>
+          Chapter {chapter.number}
+          {chapter.title ? `: ${chapter.title}` : ''} —
+          {' '}Page <span className="text-green-700 font-semibold">{current.pageIndex + 1}</span>
+          {' '}of {pages.length}
+        </BreadcrumbPill>
+      );
+    }
+    return null;
+  }
+
+  // ── Nav ────────────────────────────────────────────────────────
   const goPrev = () => {
     const p = prevState(current, allStates);
     if (p) setCurrent(p);
@@ -309,11 +322,11 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     <div className="min-h-screen bg-slate-50">
       {/* Top bar */}
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="max-w-full px-4 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <button
               onClick={() => setTocOpen(true)}
-              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
               aria-label="Open table of contents"
             >
               <Menu size={18} />
@@ -321,9 +334,12 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
             <div className="px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-avenir rounded-full shrink-0">
               Editing
             </div>
-            <h1 className="text-sm md:text-base font-avenir text-slate-700 truncate">
+            <h1 className="text-sm md:text-base font-avenir text-slate-700 truncate shrink min-w-0">
               {bookState.title}
             </h1>
+            <div className="hidden md:block min-w-0 truncate">
+              {renderBreadcrumb()}
+            </div>
           </div>
           <div className="flex items-center gap-3 md:gap-4 shrink-0">
             <div className="hidden sm:block">
@@ -339,14 +355,19 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
             </button>
           </div>
         </div>
+
+        {/* Mobile breadcrumb (sits below the main row) */}
+        <div className="md:hidden px-4 pb-2">
+          {renderBreadcrumb()}
+        </div>
       </div>
 
-      {/* Save indicator on mobile (below top bar) */}
+      {/* Mobile save indicator */}
       <div className="sm:hidden px-4 py-2 bg-white border-b border-slate-100 flex justify-end">
         <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
       </div>
 
-      {/* The view itself */}
+      {/* Current view */}
       <AnimatePresence mode="wait">
         <motion.div
           key={stateKey(current)}
@@ -359,7 +380,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         </motion.div>
       </AnimatePresence>
 
-      {/* Bottom prev/next bar */}
+      {/* Bottom prev/next */}
       <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-between">
         <button
           onClick={goPrev}
@@ -394,6 +415,14 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         onNavigate={(s) => setCurrent(s)}
       />
     </div>
+  );
+}
+
+function BreadcrumbPill({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-xs md:text-sm font-avenir text-slate-500 uppercase tracking-wider truncate inline-block">
+      {children}
+    </span>
   );
 }
 

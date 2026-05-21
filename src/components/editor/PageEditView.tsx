@@ -4,7 +4,7 @@ import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
 import RichTextEditor from './RichTextEditor';
 import GalleryEditor from './GalleryEditor';
-import { TextField, SectionHeading, FieldLabel } from './formFields';
+import { TextField, FieldLabel } from './formFields';
 import { hasWordPressMarkup, sanitizeWordPressHtml } from '../../utils/sanitizeWordPressHtml';
 import { Sparkles } from 'lucide-react';
 
@@ -17,19 +17,23 @@ interface PageEditViewProps {
   totalPages: number;
   onChange: (patch: Partial<Page>) => void;
   onGalleryChanged?: () => void;
-  /** Called when user adds a new gallery image via the editor toolbar */
   onAddToGallery: (imageUrl: string, caption?: string) => Promise<void>;
 }
 
+/**
+ * Page editor — the workhorse view.
+ *
+ * Header is intentionally minimal here (top-bar breadcrumb carries the
+ * chapter/page context). Right column is the scroll container; toolbar
+ * inside the rich-text editor sticks to the top while you scroll.
+ */
 export default function PageEditView({
-  book, chapter, page, galleryItems, pageNumber, totalPages,
-  onChange, onGalleryChanged, onAddToGallery,
+  book, chapter, page, galleryItems, onChange, onGalleryChanged, onAddToGallery,
 }: PageEditViewProps) {
   const needsCleanup = hasWordPressMarkup(page.content);
 
   return (
     <SplitScreenLayout
-      breadcrumb={`Chapter ${chapter.number}: ${chapter.title} — Page ${pageNumber} of ${totalPages}`}
       left={
         <ImagePicker
           value={page.image_url}
@@ -42,8 +46,6 @@ export default function PageEditView({
       }
       right={
         <>
-          <SectionHeading>Page</SectionHeading>
-
           <TextField
             label="Page heading"
             value={page.subtitle ?? ''}
@@ -72,6 +74,7 @@ export default function PageEditView({
               placeholder="Tell the story…"
               bookSlug={book.slug}
               onAddToGallery={onAddToGallery}
+              stickyToolbar
             />
           </div>
 

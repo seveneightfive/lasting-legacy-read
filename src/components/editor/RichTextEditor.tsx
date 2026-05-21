@@ -9,6 +9,7 @@ import Image from '@tiptap/extension-image';
 import { marked } from 'marked';
 import EditorToolbar from './EditorToolbar';
 import InsertImageDialog from './InsertImageDialog';
+import { Figure } from './FigureExtension';
 import { sanitizeWordPressHtml } from '../../utils/sanitizeWordPressHtml';
 
 interface RichTextEditorProps {
@@ -17,10 +18,13 @@ interface RichTextEditorProps {
   placeholder?: string;
   contentClassName?: string;
   hideToolbar?: boolean;
-  /** Book slug for upload folder */
   bookSlug?: string;
-  /** When provided, the "Insert image" button shows an "Add to gallery" option that calls this */
   onAddToGallery?: (imageUrl: string, caption?: string) => Promise<void>;
+  /**
+   * If true, the toolbar uses position: sticky; top: 0 so it remains visible
+   * while the user scrolls the prose inside a scrolling parent.
+   */
+  stickyToolbar?: boolean;
 }
 
 function normalizeToHtml(content: string): string {
@@ -37,7 +41,7 @@ const EDITOR_CLASS = [
   'leading-body-relaxed',
   'body-tracking',
   'focus:outline-none',
-  'min-h-[200px]',
+  'min-h-[300px]',
   'p-4',
 ].join(' ');
 
@@ -49,6 +53,7 @@ export default function RichTextEditor({
   hideToolbar = false,
   bookSlug,
   onAddToGallery,
+  stickyToolbar = false,
 }: RichTextEditorProps) {
   const [showImageDialog, setShowImageDialog] = useState(false);
 
@@ -63,10 +68,13 @@ export default function RichTextEditor({
       }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder: placeholder ?? 'Start writing…' }),
+      // Standalone <img> tags (e.g. from legacy WordPress content)
       Image.configure({
         HTMLAttributes: { class: 'rounded-lg my-4' },
         allowBase64: false,
       }),
+      // New images inserted via the toolbar use <figure> + <figcaption>
+      Figure,
     ],
     content: sanitizeWordPressHtml(normalizeToHtml(value)),
     onUpdate: ({ editor }) => {
@@ -74,8 +82,7 @@ export default function RichTextEditor({
     },
     editorProps: {
       attributes: {
-        // Class must be a single-line string with no embedded whitespace tokens
-        // (ProseMirror passes this to classList.add).
+        // Single-line — newlines/tabs break classList.add()
         class: [EDITOR_CLASS, contentClassName ?? '']
           .join(' ')
           .replace(/\s+/g, ' ')
@@ -84,7 +91,7 @@ export default function RichTextEditor({
     },
   });
 
-  // Sync external value changes (e.g. when navigating to a different page)
+  // Sync external value changes (navigation between pages)
   useEffect(() => {
     if (!editor) return;
     const incoming = sanitizeWordPressHtml(normalizeToHtml(value));
@@ -94,13 +101,28 @@ export default function RichTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
 
-  const handleInsertInline = (url: string, alt?: string) => {
+  /**
+   * Inserts an image as a <figure> with optional <figcaption>.
+   * The Figure custom node handles serialization to HTML so the reader
+   * gets a real <figure> in the DOM and the caption is visible below.
+   */
+  const handleInsertInline = (url: string, caption?: string) => {
     if (!editor) return;
+    const trimmedCaption = caption?.trim() ?? '';
     editor
       .chain()
       .focus()
-      .setImage({ src: url, alt: alt ?? '' })
-      .createParagraphNear()
+      .insertContent({
+        type: 'figure',
+        attrs: {
+          src: url,
+          alt: trimmedCaption || null,
+          caption: trimmedCaption || null,
+        },
+      })
+      // Make sure there's a paragraph after the figure so the caret has
+      // somewhere natural to land for further typing.
+      .insertContent({ type: 'paragraph' })
       .run();
   };
 
@@ -111,10 +133,12 @@ export default function RichTextEditor({
   return (
     <div className="rich-text-editor">
       {!hideToolbar && (
-        <EditorToolbar
-          editor={editor}
-          onClickInsertImage={bookSlug ? () => setShowImageDialog(true) : undefined}
-        />
+        <div className={stickyToolbar ? 'sticky top-0 z-10 bg-white' : ''}>
+          <EditorToolbar
+            editor={editor}
+            onClickInsertImage={bookSlug ? () => setShowImageDialog(true) : undefined}
+          />
+        </div>
       )}
       <div
         className={`border border-slate-200 bg-white
@@ -130,8 +154,8 @@ export default function RichTextEditor({
           bookSlug={bookSlug}
           allowGallery={!!onAddToGallery}
           onCancel={() => setShowImageDialog(false)}
-          onInsertInline={(url, alt) => {
-            handleInsertInline(url, alt);
+          onInsertInline={(url, caption) => {
+            handleInsertInline(url, caption);
             setShowImageDialog(false);
           }}
           onAddToGallery={async (url, caption) => {

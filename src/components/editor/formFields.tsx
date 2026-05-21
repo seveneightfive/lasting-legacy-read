@@ -42,11 +42,35 @@ export function TextField({
   );
 }
 
-export function SectionHeading({ children, hint }: { children: React.ReactNode; hint?: string }) {
+export function SectionHeading({
+  children, hint, centered,
+}: {
+  children: React.ReactNode;
+  hint?: string;
+  centered?: boolean;
+}) {
   return (
-    <div className="mb-4">
-      <h2 className="text-2xl font-avenir text-slate-800 heading-tracking">{children}</h2>
-      {hint && <p className="text-sm text-slate-500 font-lora italic mt-1">{hint}</p>}
+    <div className={`mb-6 ${centered ? 'text-center' : ''}`}>
+      <h2 className="text-2xl md:text-3xl font-avenir text-slate-800 heading-tracking">
+        {children}
+      </h2>
+      {hint && (
+        <p className="text-sm text-slate-500 font-lora italic mt-2">
+          {hint}
+        </p>
+      )}
     </div>
+  );
+}
+
+/**
+ * Small kicker label shown above a SectionHeading.
+ * E.g. "CHAPTER 2" above "Chapter Title".
+ */
+export function SectionKicker({ children, centered }: { children: React.ReactNode; centered?: boolean }) {
+  return (
+    <p className={`text-xs font-avenir uppercase tracking-wider text-slate-500 mb-2 ${centered ? 'text-center' : ''}`}>
+      {children}
+    </p>
   );
 }

@@ -3,7 +3,7 @@ import { Book } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
 import RichTextEditor from './RichTextEditor';
-import { SectionHeading, FieldLabel } from './formFields';
+import { FieldLabel, SectionHeading, SectionKicker } from './formFields';
 
 interface DedicationEditViewProps {
   book: Book;
@@ -11,14 +11,13 @@ interface DedicationEditViewProps {
 }
 
 /**
- * The dedication has no dedicated image field on books — we reuse
- * the book cover image_url as the visual companion. If you want a
- * separate dedication image later, add a column and swap it here.
+ * Dedication screen: short standalone tribute. Centered like the Cover
+ * and Chapter Title screens for consistent breathing room.
  */
 export default function DedicationEditView({ book, onChange }: DedicationEditViewProps) {
   return (
     <SplitScreenLayout
-      breadcrumb="Dedication"
+      rightAlign="center"
       left={
         <ImagePicker
           value={book.image_url}
@@ -30,7 +29,8 @@ export default function DedicationEditView({ book, onChange }: DedicationEditVie
       }
       right={
         <>
-          <SectionHeading hint="A short tribute or message that appears before the story begins.">
+          <SectionKicker centered>Book</SectionKicker>
+          <SectionHeading centered hint="A short tribute or message that appears before the story begins.">
             Dedication
           </SectionHeading>
           <FieldLabel>Dedication text</FieldLabel>

@@ -2,17 +2,22 @@ import React from 'react';
 import { Book } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
-import { TextField, SectionHeading } from './formFields';
+import { TextField, SectionHeading, SectionKicker } from './formFields';
 
 interface CoverEditViewProps {
   book: Book;
   onChange: (patch: Partial<Book>) => void;
 }
 
+/**
+ * Book cover screen: the title and author ARE the book's identity.
+ * Treated like the Chapter Title screen — centered, with the form
+ * surrounded by breathing room.
+ */
 export default function CoverEditView({ book, onChange }: CoverEditViewProps) {
   return (
     <SplitScreenLayout
-      breadcrumb="Cover"
+      rightAlign="center"
       left={
         <ImagePicker
           value={book.image_url}
@@ -24,8 +29,9 @@ export default function CoverEditView({ book, onChange }: CoverEditViewProps) {
       }
       right={
         <>
-          <SectionHeading hint="This is the first thing readers see when they open the story.">
-            Book Cover
+          <SectionKicker centered>Book</SectionKicker>
+          <SectionHeading centered hint="The first thing readers see when they open the story.">
+            Cover
           </SectionHeading>
           <TextField
             label="Title"

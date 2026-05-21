@@ -3,7 +3,7 @@ import { Book } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
 import RichTextEditor from './RichTextEditor';
-import { SectionHeading, FieldLabel } from './formFields';
+import { FieldLabel } from './formFields';
 
 interface IntroEditViewProps {
   book: Book;
@@ -13,7 +13,6 @@ interface IntroEditViewProps {
 export default function IntroEditView({ book, onChange }: IntroEditViewProps) {
   return (
     <SplitScreenLayout
-      breadcrumb="Introduction"
       left={
         <ImagePicker
           value={book.intro_image_url}
@@ -26,15 +25,16 @@ export default function IntroEditView({ book, onChange }: IntroEditViewProps) {
       }
       right={
         <>
-          <SectionHeading hint="The opening to the story — context, a welcome, or how it came to be told.">
-            Introduction
-          </SectionHeading>
+          <p className="text-sm text-slate-500 font-lora italic mb-6">
+            The opening to the story — context, a welcome, or how it came to be told.
+          </p>
           <FieldLabel>Introduction text</FieldLabel>
           <RichTextEditor
             value={book.intro ?? ''}
             onChange={(html) => onChange({ intro: html })}
             placeholder="Open the story…"
             bookSlug={book.slug}
+            stickyToolbar
           />
         </>
       }

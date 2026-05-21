@@ -2,7 +2,7 @@ import React from 'react';
 import { Book, Chapter } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
-import { TextField, SectionHeading } from './formFields';
+import { TextField, SectionHeading, SectionKicker } from './formFields';
 
 interface ChapterTitleEditViewProps {
   book: Book;
@@ -10,10 +10,15 @@ interface ChapterTitleEditViewProps {
   onChange: (patch: Partial<Chapter>) => void;
 }
 
+/**
+ * Chapter title screen: the form IS the heading.
+ * Centered vertically so the small two-field form doesn't look orphaned
+ * at the top of a tall column.
+ */
 export default function ChapterTitleEditView({ book, chapter, onChange }: ChapterTitleEditViewProps) {
   return (
     <SplitScreenLayout
-      breadcrumb={`Chapter ${chapter.number}`}
+      rightAlign="center"
       left={
         <ImagePicker
           value={chapter.image_url}
@@ -24,7 +29,8 @@ export default function ChapterTitleEditView({ book, chapter, onChange }: Chapte
       }
       right={
         <>
-          <SectionHeading hint="The chapter's opening screen — readers see this before the first page.">
+          <SectionKicker centered>Chapter {chapter.number}</SectionKicker>
+          <SectionHeading centered hint="Readers see this screen before the chapter's first page.">
             Chapter Title
           </SectionHeading>
           <TextField
