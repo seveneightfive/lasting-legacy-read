@@ -1,9 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
 /* Custom font face for Avenir Next - fallback to system fonts if not available */
 @layer base {
   .font-avenir {
@@ -52,7 +50,6 @@
     margin-top: 0;
     font-family: 'Lora', Georgia, 'Times New Roman', serif;
   }
-
   .markdown-body p:last-child {
     margin-bottom: 0;
   }
@@ -71,7 +68,6 @@
     margin-bottom: 1rem;
     display: block;
   }
-
   .markdown-body h1:first-child,
   .markdown-body h2:first-child,
   .markdown-body h3:first-child {
@@ -100,6 +96,15 @@
   .markdown-body ol {
     margin: 1rem 0;
     padding-left: 1.5rem;
+  }
+  
+  /* WordPress lists ship without browser default list-style; restore it */
+  .markdown-body ul,
+  .markdown-body ul.wp-block-list {
+    list-style: disc;
+  }
+  .markdown-body ol {
+    list-style: decimal;
   }
   
   .markdown-body li {
@@ -144,5 +149,93 @@
     text-align: center;
     color: #64748b;
     margin-bottom: 20px;
+  }
+
+  /* ============================================================
+     Inline content from migrated WordPress posts (Jerry Farley
+     and any future imports). Handles <figure>, figcaptions,
+     and wp-block-columns layouts embedded inside pages.content.
+     ============================================================ */
+
+  /* Single inline image with caption */
+  .markdown-body figure {
+    margin: 1.5rem 0;
+  }
+
+  .markdown-body figure img {
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+
+  /* Captions under inline images */
+  .markdown-body figcaption,
+  .markdown-body .wp-element-caption {
+    font-size: 0.875rem;
+    color: rgb(100 116 139); /* slate-500 */
+    font-style: italic;
+    text-align: center;
+    margin-top: 0.5rem;
+    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+    line-height: 1.5;
+  }
+
+  /* Two-column photo rows (e.g. then/now, side-by-side family photos) */
+  .markdown-body .wp-block-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+    align-items: start;
+  }
+
+  .markdown-body .wp-block-column {
+    margin: 0;
+  }
+
+  .markdown-body .wp-block-column figure {
+    margin: 0;
+  }
+
+  /* Stack columns vertically on narrow screens */
+  @media (max-width: 640px) {
+    .markdown-body .wp-block-columns {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+  }
+
+  /* Image alignment variants from WordPress */
+  .markdown-body figure.alignleft {
+    float: left;
+    margin: 0.5rem 1.5rem 1rem 0;
+    max-width: 50%;
+  }
+  .markdown-body figure.alignright {
+    float: right;
+    margin: 0.5rem 0 1rem 1.5rem;
+    max-width: 50%;
+  }
+  .markdown-body figure.aligncenter {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* Clear floats after content so following sections start cleanly */
+  .markdown-body::after {
+    content: "";
+    display: block;
+    clear: both;
+  }
+
+  /* On mobile, don't let images float - they get too cramped */
+  @media (max-width: 640px) {
+    .markdown-body figure.alignleft,
+    .markdown-body figure.alignright {
+      float: none;
+      margin: 1.5rem 0;
+      max-width: 100%;
+    }
   }
 }
