@@ -16,6 +16,7 @@ interface NavigationMenuProps {
   onNavigateToChapter: (index: number) => void;
   onNavigateToGallery: () => void;
   onNavigateToGuestbook: () => void;
+  onNavigateToTitle?: () => void;
 }
 
 export default function NavigationMenu({
@@ -26,6 +27,7 @@ export default function NavigationMenu({
   onNavigateToChapter,
   onNavigateToGallery,
   onNavigateToGuestbook
+  onNavigateToTitle,
 }: NavigationMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -40,6 +42,13 @@ export default function NavigationMenu({
 
   const logoUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/site-images/LLO-SiteLogo.png`;
 
+  const handleTitleClick = () => {
+  if (onNavigateToTitle) {
+    onNavigateToTitle();
+    setIsOpen(false);
+  }
+};
+  
   const handleChapterClick = (index: number) => {
     onNavigateToChapter(index);
     setIsOpen(false);
@@ -174,11 +183,26 @@ export default function NavigationMenu({
 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="mb-8">
-                  <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight">
-                    {book.title}
-                  </h3>
-                  <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
-                </div>
+  {onNavigateToTitle ? (
+    <button
+      onClick={handleTitleClick}
+      className="text-left w-full group"
+      aria-label="Return to title page"
+    >
+      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight group-hover:text-slate-600 transition-colors">
+        {book.title}
+      </h3>
+      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
+    </button>
+  ) : (
+    <>
+      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight">
+        {book.title}
+      </h3>
+      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
+    </>
+  )}
+</div>
 
                 <nav className="space-y-2">
                   {chapters.map((chapter, index) => (
