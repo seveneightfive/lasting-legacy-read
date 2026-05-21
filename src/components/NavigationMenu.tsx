@@ -26,7 +26,7 @@ export default function NavigationMenu({
   currentState,
   onNavigateToChapter,
   onNavigateToGallery,
-  onNavigateToGuestbook
+  onNavigateToGuestbook,
   onNavigateToTitle,
 }: NavigationMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
