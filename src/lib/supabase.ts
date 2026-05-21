@@ -11,6 +11,8 @@ export interface Book {
   created_at?: string; date_published?: string; view_count?: number;
   filloutform_link?: string; user?: string;
   edit_pin?: string;
+  intro_image_url?: string;
+  intro_image_caption?: string;
 }
 export interface Chapter {
   id: number; title: string; lede?: string; book_id: number;
