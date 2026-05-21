@@ -5,11 +5,13 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, Quote,
   AlignLeft, AlignCenter, AlignRight,
-  Link as LinkIcon, Undo, Redo,
+  Link as LinkIcon, Undo, Redo, Image as ImageIcon,
 } from 'lucide-react';
 
 interface EditorToolbarProps {
   editor: Editor | null;
+  /** Optional handler — when provided, an Image button appears in the toolbar */
+  onClickInsertImage?: () => void;
 }
 
 interface ToolButtonProps {
@@ -43,7 +45,7 @@ function Divider() {
   return <div className="w-px h-6 bg-slate-200 mx-1" />;
 }
 
-export default function EditorToolbar({ editor }: EditorToolbarProps) {
+export default function EditorToolbar({ editor, onClickInsertImage }: EditorToolbarProps) {
   if (!editor) return null;
 
   const setLink = () => {
@@ -59,104 +61,52 @@ export default function EditorToolbar({ editor }: EditorToolbarProps) {
 
   return (
     <div className="flex flex-wrap items-center gap-0.5 p-2 border border-slate-200 rounded-t-lg bg-slate-50">
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleBold().run()}
-        active={editor.isActive('bold')}
-        label="Bold"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleBold().run()} active={editor.isActive('bold')} label="Bold">
         <Bold size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleItalic().run()}
-        active={editor.isActive('italic')}
-        label="Italic"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleItalic().run()} active={editor.isActive('italic')} label="Italic">
         <Italic size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleUnderline().run()}
-        active={editor.isActive('underline')}
-        label="Underline"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleUnderline().run()} active={editor.isActive('underline')} label="Underline">
         <UnderlineIcon size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleStrike().run()}
-        active={editor.isActive('strike')}
-        label="Strikethrough"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleStrike().run()} active={editor.isActive('strike')} label="Strikethrough">
         <Strikethrough size={16} />
       </ToolButton>
 
       <Divider />
 
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-        active={editor.isActive('heading', { level: 1 })}
-        label="Heading 1"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} active={editor.isActive('heading', { level: 1 })} label="Heading 1">
         <Heading1 size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-        active={editor.isActive('heading', { level: 2 })}
-        label="Heading 2"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} active={editor.isActive('heading', { level: 2 })} label="Heading 2">
         <Heading2 size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-        active={editor.isActive('heading', { level: 3 })}
-        label="Heading 3"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} active={editor.isActive('heading', { level: 3 })} label="Heading 3">
         <Heading3 size={16} />
       </ToolButton>
 
       <Divider />
 
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleBulletList().run()}
-        active={editor.isActive('bulletList')}
-        label="Bullet list"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleBulletList().run()} active={editor.isActive('bulletList')} label="Bullet list">
         <List size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleOrderedList().run()}
-        active={editor.isActive('orderedList')}
-        label="Numbered list"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleOrderedList().run()} active={editor.isActive('orderedList')} label="Numbered list">
         <ListOrdered size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().toggleBlockquote().run()}
-        active={editor.isActive('blockquote')}
-        label="Blockquote"
-      >
+      <ToolButton onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} label="Blockquote">
         <Quote size={16} />
       </ToolButton>
 
       <Divider />
 
-      <ToolButton
-        onClick={() => editor.chain().focus().setTextAlign('left').run()}
-        active={editor.isActive({ textAlign: 'left' })}
-        label="Align left"
-      >
+      <ToolButton onClick={() => editor.chain().focus().setTextAlign('left').run()} active={editor.isActive({ textAlign: 'left' })} label="Align left">
         <AlignLeft size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().setTextAlign('center').run()}
-        active={editor.isActive({ textAlign: 'center' })}
-        label="Align center"
-      >
+      <ToolButton onClick={() => editor.chain().focus().setTextAlign('center').run()} active={editor.isActive({ textAlign: 'center' })} label="Align center">
         <AlignCenter size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().setTextAlign('right').run()}
-        active={editor.isActive({ textAlign: 'right' })}
-        label="Align right"
-      >
+      <ToolButton onClick={() => editor.chain().focus().setTextAlign('right').run()} active={editor.isActive({ textAlign: 'right' })} label="Align right">
         <AlignRight size={16} />
       </ToolButton>
 
@@ -166,20 +116,18 @@ export default function EditorToolbar({ editor }: EditorToolbarProps) {
         <LinkIcon size={16} />
       </ToolButton>
 
+      {onClickInsertImage && (
+        <ToolButton onClick={onClickInsertImage} label="Insert image">
+          <ImageIcon size={16} />
+        </ToolButton>
+      )}
+
       <Divider />
 
-      <ToolButton
-        onClick={() => editor.chain().focus().undo().run()}
-        disabled={!editor.can().undo()}
-        label="Undo"
-      >
+      <ToolButton onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} label="Undo">
         <Undo size={16} />
       </ToolButton>
-      <ToolButton
-        onClick={() => editor.chain().focus().redo().run()}
-        disabled={!editor.can().redo()}
-        label="Redo"
-      >
+      <ToolButton onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().redo()} label="Redo">
         <Redo size={16} />
       </ToolButton>
     </div>

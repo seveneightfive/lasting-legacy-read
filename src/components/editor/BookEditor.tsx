@@ -1,10 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { motion } from 'framer-motion';
-import { LogOut, BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
-import { supabase, Book, Chapter, Page } from '../../lib/supabase';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LogOut, Menu, ChevronLeft, ChevronRight } from 'lucide-react';
+import { supabase, Book, Chapter, Page, GalleryItem } from '../../lib/supabase';
 import { useAutosave } from '../../hooks/useAutosave';
-import RichTextEditor from './RichTextEditor';
+import { EditorState, buildToc, flattenStates, nextState, prevState, stateKey } from '../../utils/editorState';
 import SaveIndicator from './SaveIndicator';
+import TableOfContents from './TableOfContents';
+import CoverEditView from './CoverEditView';
+import DedicationEditView from './DedicationEditView';
+import IntroEditView from './IntroEditView';
+import ChapterTitleEditView from './ChapterTitleEditView';
+import PageEditView from './PageEditView';
 
 interface BookEditorProps {
   book: Book;
@@ -13,50 +19,93 @@ interface BookEditorProps {
   onExit: () => void;
 }
 
-type EditorTab = 'book' | 'chapter';
-
 /**
- * BookEditor — the editable counterpart to BookReader.
+ * BookEditor — state-machine driven editor that mirrors the BookReader flow.
  *
- * Architecture:
- *  - Local state mirrors the DB rows. Changes are debounced & autosaved.
- *  - Each save writes a row to `page_revisions` (audit + version history).
- *  - "Exit Editor" flushes pending saves and navigates back to the reader.
+ *   cover → dedication → intro → chapter-title → page → page → chapter-title → …
+ *
+ * One state at a time, with a TOC drawer for jumping around and prev/next
+ * arrows for sequential editing. Each state has its own split-screen layout.
  */
 export default function BookEditor({ book, chapters: initialChapters, pin, onExit }: BookEditorProps) {
-  // ─── Local editable state ────────────────────────────────────
+  // ── Editable state (local) ─────────────────────────────────────
   const [bookState, setBookState] = useState<Book>(book);
   const [chapters, setChapters] = useState<Chapter[]>(initialChapters);
-  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
-  const [pages, setPages] = useState<Page[]>([]);
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [tab, setTab] = useState<EditorTab>('book');
-  const [loading, setLoading] = useState(false);
 
-  const currentChapter = chapters[currentChapterIndex];
-  const currentPage = pages[currentPageIndex];
+  // Pages cached per chapter ID (load lazily as user navigates)
+  const [pagesByChapter, setPagesByChapter] = useState<Map<number, Page[]>>(new Map());
+  const [galleryByPage, setGalleryByPage] = useState<Map<number, GalleryItem[]>>(new Map());
 
-  // ─── Load pages when chapter changes ─────────────────────────
+  // Current edit state
+  const [current, setCurrent] = useState<EditorState>({ kind: 'cover' });
+  const [tocOpen, setTocOpen] = useState(false);
+
+  // ── Build TOC tree ─────────────────────────────────────────────
+  const toc = useMemo(
+    () => buildToc(bookState, chapters, pagesByChapter),
+    [bookState, chapters, pagesByChapter]
+  );
+  const allStates = useMemo(() => flattenStates(toc), [toc]);
+
+  // ── Eagerly load pages for the first chapter, then on demand ──
   useEffect(() => {
-    if (!currentChapter) return;
-    setLoading(true);
-    supabase
+    // Load pages for the chapter we'd display first, so TOC is populated
+    const firstChapter = chapters[0];
+    if (firstChapter && !pagesByChapter.has(firstChapter.id)) {
+      void loadPages(firstChapter.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadPages = useCallback(async (chapterId: number) => {
+    const { data } = await supabase
       .from('pages')
       .select('*')
-      .eq('chapter_id', currentChapter.id)
-      .order('sort_order', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('Failed to load pages:', error);
-        } else {
-          setPages(data || []);
-          setCurrentPageIndex(0);
-        }
-        setLoading(false);
+      .eq('chapter_id', chapterId)
+      .order('sort_order', { ascending: true });
+    if (data) {
+      setPagesByChapter((prev) => {
+        const next = new Map(prev);
+        next.set(chapterId, data);
+        return next;
       });
-  }, [currentChapter?.id]);
+    }
+  }, []);
 
-  // ─── Save helpers ────────────────────────────────────────────
+  const loadGallery = useCallback(async (pageId: number) => {
+    const { data } = await supabase
+      .from('gallery')
+      .select('*')
+      .eq('page_id', pageId)
+      .order('sort_order', { ascending: true });
+    if (data) {
+      setGalleryByPage((prev) => {
+        const next = new Map(prev);
+        next.set(pageId, data);
+        return next;
+      });
+    }
+  }, []);
+
+  // When we navigate to a chapter or page, ensure its data is loaded
+  useEffect(() => {
+    if (current.kind === 'chapter-title' || current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      if (chapter && !pagesByChapter.has(chapter.id)) {
+        void loadPages(chapter.id);
+      }
+    }
+    if (current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      const pages = pagesByChapter.get(chapter?.id) ?? [];
+      const page = pages[current.pageIndex];
+      if (page && !galleryByPage.has(page.id)) {
+        void loadGallery(page.id);
+      }
+    }
+  }, [current, chapters, pagesByChapter, galleryByPage, loadPages, loadGallery]);
+
+  // ── Save helpers ───────────────────────────────────────────────
   const logRevision = useCallback(async (params: {
     page_id?: number;
     chapter_id?: number;
@@ -66,539 +115,300 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     new_value?: string;
   }) => {
     try {
-      await supabase.from('page_revisions').insert({
-        ...params,
-        edit_pin: pin,
-      });
+      await supabase.from('page_revisions').insert({ ...params, edit_pin: pin });
     } catch (err) {
       console.error('Failed to log revision:', err);
     }
   }, [pin]);
 
-  // ─── BOOK-LEVEL autosaves ────────────────────────────────────
-  const saveBookField = useCallback(async (field: keyof Book, newValue: string, previousValue?: string) => {
-    const { error } = await supabase
-      .from('books')
-      .update({ [field]: newValue })
-      .eq('id', book.id);
-    if (error) throw error;
-    void logRevision({
-      book_id: book.id,
-      field: String(field),
-      previous_value: previousValue,
-      new_value: newValue,
-    });
+  // ── Generic per-state autosaves ────────────────────────────────
+  // Rather than 11 individual hooks, we maintain a "dirty payload" per state
+  // and one autosave hook that flushes it. Cleaner state, fewer surprises.
+
+  type DirtyPayload =
+    | { kind: 'book';    changes: Partial<Book> }
+    | { kind: 'chapter'; chapterId: number; changes: Partial<Chapter> }
+    | { kind: 'page';    pageId: number; chapterId: number; changes: Partial<Page> };
+
+  const [dirty, setDirty] = useState<DirtyPayload | null>(null);
+
+  const persistDirty = useCallback(async (payload: DirtyPayload) => {
+    if (Object.keys(payload.changes).length === 0) return;
+
+    if (payload.kind === 'book') {
+      const { error } = await supabase.from('books').update(payload.changes).eq('id', book.id);
+      if (error) throw error;
+      for (const [field, value] of Object.entries(payload.changes)) {
+        void logRevision({
+          book_id: book.id,
+          field,
+          new_value: value == null ? undefined : String(value),
+        });
+      }
+    } else if (payload.kind === 'chapter') {
+      const { error } = await supabase.from('chapters').update(payload.changes).eq('id', payload.chapterId);
+      if (error) throw error;
+      for (const [field, value] of Object.entries(payload.changes)) {
+        void logRevision({
+          chapter_id: payload.chapterId,
+          book_id: book.id,
+          field,
+          new_value: value == null ? undefined : String(value),
+        });
+      }
+    } else {
+      const { error } = await supabase.from('pages').update(payload.changes).eq('id', payload.pageId);
+      if (error) throw error;
+      for (const [field, value] of Object.entries(payload.changes)) {
+        void logRevision({
+          page_id: payload.pageId,
+          chapter_id: payload.chapterId,
+          book_id: book.id,
+          field,
+          new_value: value == null ? undefined : String(value),
+        });
+      }
+    }
   }, [book.id, logRevision]);
 
-  const bookTitleSave = useAutosave({
-    value: bookState.title,
-    onSave: async (v) => saveBookField('title', v, book.title),
-  });
-  const bookAuthorSave = useAutosave({
-    value: bookState.author,
-    onSave: async (v) => saveBookField('author', v, book.author),
-  });
-  const bookDedicationSave = useAutosave({
-    value: bookState.dedication ?? '',
-    onSave: async (v) => saveBookField('dedication', v, book.dedication),
-  });
-  const bookIntroSave = useAutosave({
-    value: bookState.intro ?? '',
-    onSave: async (v) => saveBookField('intro', v, book.intro),
-  });
-
-  // ─── CHAPTER-LEVEL autosaves ─────────────────────────────────
-  const saveChapterField = useCallback(async (chapterId: number, field: keyof Chapter, newValue: string, previousValue?: string) => {
-    const { error } = await supabase
-      .from('chapters')
-      .update({ [field]: newValue })
-      .eq('id', chapterId);
-    if (error) throw error;
-    void logRevision({
-      chapter_id: chapterId,
-      book_id: book.id,
-      field: String(field),
-      previous_value: previousValue,
-      new_value: newValue,
-    });
-  }, [book.id, logRevision]);
-
-  const chapterTitleSave = useAutosave({
-    value: currentChapter?.title ?? '',
-    enabled: !!currentChapter,
-    resetKey: currentChapter?.id,
-    onSave: async (v) => {
-      if (!currentChapter) return;
-      await saveChapterField(currentChapter.id, 'title', v, initialChapters.find(c => c.id === currentChapter.id)?.title);
+  const autosave = useAutosave({
+    value: dirty,
+    onSave: async (val) => {
+      if (!val) return;
+      await persistDirty(val);
+      setDirty(null);
     },
-  });
-  const chapterLedeSave = useAutosave({
-    value: currentChapter?.lede ?? '',
-    enabled: !!currentChapter,
-    resetKey: currentChapter?.id,
-    onSave: async (v) => {
-      if (!currentChapter) return;
-      await saveChapterField(currentChapter.id, 'lede', v, initialChapters.find(c => c.id === currentChapter.id)?.lede);
-    },
-  });
-
-  // ─── PAGE-LEVEL autosaves ────────────────────────────────────
-  const savePageField = useCallback(async (pageId: number, field: keyof Page, newValue: string, previousValue?: string) => {
-    const { error } = await supabase
-      .from('pages')
-      .update({ [field]: newValue })
-      .eq('id', pageId);
-    if (error) throw error;
-    void logRevision({
-      page_id: pageId,
-      chapter_id: currentChapter?.id,
-      book_id: book.id,
-      field: String(field),
-      previous_value: previousValue,
-      new_value: newValue,
-    });
-  }, [book.id, currentChapter?.id, logRevision]);
-
-  const pageContentSave = useAutosave({
-    value: currentPage?.content ?? '',
-    enabled: !!currentPage,
-    resetKey: currentPage?.id,
     delay: 1500,
-    onSave: async (v) => {
-      if (!currentPage) return;
-      await savePageField(currentPage.id, 'content', v);
-    },
-  });
-  const pageSubtitleSave = useAutosave({
-    value: currentPage?.subtitle ?? '',
-    enabled: !!currentPage,
-    resetKey: currentPage?.id,
-    onSave: async (v) => {
-      if (!currentPage) return;
-      await savePageField(currentPage.id, 'subtitle', v);
-    },
-  });
-  const pageQuoteSave = useAutosave({
-    value: currentPage?.quote ?? '',
-    enabled: !!currentPage,
-    resetKey: currentPage?.id,
-    onSave: async (v) => {
-      if (!currentPage) return;
-      await savePageField(currentPage.id, 'quote', v);
-    },
-  });
-  const pageQuoteAttrSave = useAutosave({
-    value: currentPage?.quote_attribute ?? '',
-    enabled: !!currentPage,
-    resetKey: currentPage?.id,
-    onSave: async (v) => {
-      if (!currentPage) return;
-      await savePageField(currentPage.id, 'quote_attribute', v);
-    },
-  });
-  const pageImageCaptionSave = useAutosave({
-    value: currentPage?.image_caption ?? '',
-    enabled: !!currentPage,
-    resetKey: currentPage?.id,
-    onSave: async (v) => {
-      if (!currentPage) return;
-      await savePageField(currentPage.id, 'image_caption', v);
-    },
+    resetKey: stateKey(current),  // flush on state change
   });
 
-  // ─── Aggregate save status ───────────────────────────────────
-  const allStatuses = [
-    bookTitleSave, bookAuthorSave, bookDedicationSave, bookIntroSave,
-    chapterTitleSave, chapterLedeSave,
-    pageContentSave, pageSubtitleSave, pageQuoteSave, pageQuoteAttrSave, pageImageCaptionSave,
-  ];
-  const aggregateStatus =
-    allStatuses.find(s => s.status === 'error')?.status ??
-    allStatuses.find(s => s.status === 'saving')?.status ??
-    allStatuses.find(s => s.status === 'pending')?.status ??
-    (allStatuses.some(s => s.status === 'saved') ? 'saved' : 'idle');
-  const lastSavedAt = allStatuses
-    .map(s => s.lastSavedAt)
-    .filter((d): d is Date => !!d)
-    .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+  // ── Update helpers used by the views ───────────────────────────
+  const updateBook = (patch: Partial<Book>) => {
+    setBookState((prev) => ({ ...prev, ...patch }));
+    setDirty((prev) => {
+      if (prev?.kind === 'book') return { kind: 'book', changes: { ...prev.changes, ...patch } };
+      return { kind: 'book', changes: patch };
+    });
+  };
 
-  // ─── Exit: flush all pending saves, then leave ───────────────
+  const updateChapter = (chapterId: number, patch: Partial<Chapter>) => {
+    setChapters((prev) => prev.map((c) => (c.id === chapterId ? { ...c, ...patch } : c)));
+    setDirty((prev) => {
+      if (prev?.kind === 'chapter' && prev.chapterId === chapterId) {
+        return { kind: 'chapter', chapterId, changes: { ...prev.changes, ...patch } };
+      }
+      return { kind: 'chapter', chapterId, changes: patch };
+    });
+  };
+
+  const updatePage = (pageId: number, chapterId: number, patch: Partial<Page>) => {
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      const list = next.get(chapterId) ?? [];
+      next.set(chapterId, list.map((p) => (p.id === pageId ? { ...p, ...patch } : p)));
+      return next;
+    });
+    setDirty((prev) => {
+      if (prev?.kind === 'page' && prev.pageId === pageId) {
+        return { kind: 'page', pageId, chapterId, changes: { ...prev.changes, ...patch } };
+      }
+      return { kind: 'page', pageId, chapterId, changes: patch };
+    });
+  };
+
+  // ── Add to gallery (called from the editor toolbar's image button) ──
+  const handleAddToGallery = useCallback(async (
+    pageId: number, chapterId: number, imageUrl: string, caption?: string,
+  ) => {
+    const existing = galleryByPage.get(pageId) ?? [];
+    const nextOrder = existing.length > 0
+      ? Math.max(...existing.map((g) => g.sort_order ?? 0)) + 1
+      : 0;
+    const { error } = await supabase.from('gallery').insert({
+      image_url: imageUrl,
+      image_caption: caption,
+      chapter_id: chapterId,
+      page_id: pageId,
+      sort_order: nextOrder,
+    });
+    if (error) {
+      console.error('Failed to add to gallery:', error);
+      return;
+    }
+    await loadGallery(pageId);
+  }, [galleryByPage, loadGallery]);
+
+  // ── Exit: flush + leave ────────────────────────────────────────
   const handleExit = async () => {
-    await Promise.all(allStatuses.map(s => s.flush()));
+    await autosave.flush();
     onExit();
   };
 
-  // ─── Update helpers (write to local state) ───────────────────
-  const updateBook = (patch: Partial<Book>) =>
-    setBookState(prev => ({ ...prev, ...patch }));
-  const updateChapter = (patch: Partial<Chapter>) =>
-    setChapters(prev => prev.map((c, i) =>
-      i === currentChapterIndex ? { ...c, ...patch } : c
-    ));
-  const updatePage = (patch: Partial<Page>) =>
-    setPages(prev => prev.map((p, i) =>
-      i === currentPageIndex ? { ...p, ...patch } : p
-    ));
+  // ── Render the current view ────────────────────────────────────
+  const view = renderCurrentView();
+
+  function renderCurrentView(): React.ReactNode {
+    if (current.kind === 'cover') {
+      return <CoverEditView book={bookState} onChange={updateBook} />;
+    }
+    if (current.kind === 'dedication') {
+      return <DedicationEditView book={bookState} onChange={updateBook} />;
+    }
+    if (current.kind === 'intro') {
+      return <IntroEditView book={bookState} onChange={updateBook} />;
+    }
+    if (current.kind === 'chapter-title') {
+      const chapter = chapters[current.chapterIndex];
+      if (!chapter) return <NotFound />;
+      return (
+        <ChapterTitleEditView
+          book={bookState}
+          chapter={chapter}
+          onChange={(patch) => updateChapter(chapter.id, patch)}
+        />
+      );
+    }
+    if (current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      if (!chapter) return <NotFound />;
+      const pages = pagesByChapter.get(chapter.id);
+      if (!pages) return <Loading />;
+      const page = pages[current.pageIndex];
+      if (!page) return <NotFound />;
+      const galleryItems = galleryByPage.get(page.id) ?? [];
+      return (
+        <PageEditView
+          book={bookState}
+          chapter={chapter}
+          page={page}
+          galleryItems={galleryItems}
+          pageNumber={current.pageIndex + 1}
+          totalPages={pages.length}
+          onChange={(patch) => updatePage(page.id, chapter.id, patch)}
+          onAddToGallery={(url, caption) => handleAddToGallery(page.id, chapter.id, url, caption)}
+          onGalleryChanged={() => loadGallery(page.id)}
+        />
+      );
+    }
+    return <NotFound />;
+  }
+
+  // ── Sequential nav ─────────────────────────────────────────────
+  const goPrev = () => {
+    const p = prevState(current, allStates);
+    if (p) setCurrent(p);
+  };
+  const goNext = () => {
+    const n = nextState(current, allStates);
+    if (n) setCurrent(n);
+  };
+  const canPrev = !!prevState(current, allStates);
+  const canNext = !!nextState(current, allStates);
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* ── Top bar ─────────────────────────────────────────── */}
-      <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-avenir rounded-full">
+      {/* Top bar */}
+      <div className="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => setTocOpen(true)}
+              className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              aria-label="Open table of contents"
+            >
+              <Menu size={18} />
+            </button>
+            <div className="px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-avenir rounded-full shrink-0">
               Editing
             </div>
             <h1 className="text-sm md:text-base font-avenir text-slate-700 truncate">
               {bookState.title}
             </h1>
           </div>
-          <div className="flex items-center gap-4">
-            <SaveIndicator status={aggregateStatus} lastSavedAt={lastSavedAt} />
+          <div className="flex items-center gap-3 md:gap-4 shrink-0">
+            <div className="hidden sm:block">
+              <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
+            </div>
             <button
               onClick={handleExit}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-full text-sm font-avenir hover:bg-slate-900 transition-colors"
+              className="flex items-center gap-2 px-3 md:px-4 py-2 bg-slate-800 text-white rounded-full text-sm font-avenir hover:bg-slate-900 transition-colors"
             >
               <LogOut size={14} />
-              Exit Editor
+              <span className="hidden sm:inline">Exit Editor</span>
+              <span className="sm:hidden">Exit</span>
             </button>
           </div>
         </div>
-
-        {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-4 flex gap-1 -mb-px">
-          <TabButton active={tab === 'book'} onClick={() => setTab('book')}>
-            <BookOpen size={14} />
-            Book Details
-          </TabButton>
-          <TabButton active={tab === 'chapter'} onClick={() => setTab('chapter')}>
-            Chapters & Pages
-          </TabButton>
-        </div>
       </div>
 
-      {/* ── Body ────────────────────────────────────────────── */}
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {tab === 'book' && (
-          <BookDetailsPanel
-            book={bookState}
-            onChange={updateBook}
-          />
-        )}
-
-        {tab === 'chapter' && (
-          <ChapterPanel
-            chapters={chapters}
-            currentChapterIndex={currentChapterIndex}
-            onSelectChapter={setCurrentChapterIndex}
-            currentChapter={currentChapter}
-            pages={pages}
-            currentPageIndex={currentPageIndex}
-            onSelectPage={setCurrentPageIndex}
-            currentPage={currentPage}
-            loading={loading}
-            onChangeChapter={updateChapter}
-            onChangePage={updatePage}
-          />
-        )}
+      {/* Save indicator on mobile (below top bar) */}
+      <div className="sm:hidden px-4 py-2 bg-white border-b border-slate-100 flex justify-end">
+        <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
       </div>
+
+      {/* The view itself */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={stateKey(current)}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+        >
+          {view}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Bottom prev/next bar */}
+      <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-between">
+        <button
+          onClick={goPrev}
+          disabled={!canPrev}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <ChevronLeft size={16} />
+          Previous
+        </button>
+        <button
+          onClick={() => setTocOpen(true)}
+          className="text-sm font-avenir text-slate-500 hover:text-slate-700 hidden md:block"
+        >
+          Jump to…
+        </button>
+        <button
+          onClick={goNext}
+          disabled={!canNext}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Next
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      {/* TOC drawer */}
+      <TableOfContents
+        open={tocOpen}
+        onClose={() => setTocOpen(false)}
+        toc={toc}
+        currentState={current}
+        onNavigate={(s) => setCurrent(s)}
+      />
     </div>
   );
 }
 
-// ──────────────────────────────────────────────────────────────
-// Sub-components
-// ──────────────────────────────────────────────────────────────
-
-function TabButton({
-  active, onClick, children,
-}: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function NotFound() {
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2 text-sm font-avenir border-b-2 transition-colors
-        ${active
-          ? 'border-slate-800 text-slate-800'
-          : 'border-transparent text-slate-500 hover:text-slate-700'
-        }`}
-    >
-      {children}
-    </button>
+    <div className="p-10 text-center">
+      <p className="text-slate-500 font-avenir">That section doesn't exist anymore.</p>
+    </div>
   );
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+function Loading() {
   return (
-    <label className="block text-xs font-avenir uppercase tracking-wider text-slate-500 mb-2">
-      {children}
-    </label>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="mb-10 bg-white rounded-xl border border-slate-200 p-6">
-      <h2 className="text-lg font-avenir text-slate-800 mb-4 heading-tracking">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-// ── Book details panel ──────────────────────────────────────
-function BookDetailsPanel({
-  book, onChange,
-}: { book: Book; onChange: (patch: Partial<Book>) => void }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-    >
-      <Section title="Cover">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <FieldLabel>Title</FieldLabel>
-            <input
-              type="text"
-              value={book.title}
-              onChange={(e) => onChange({ title: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-            />
-          </div>
-          <div>
-            <FieldLabel>Author</FieldLabel>
-            <input
-              type="text"
-              value={book.author}
-              onChange={(e) => onChange({ author: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-            />
-          </div>
-        </div>
-      </Section>
-
-      <Section title="Dedication">
-        <RichTextEditor
-          value={book.dedication ?? ''}
-          onChange={(html) => onChange({ dedication: html })}
-          placeholder="A few words of dedication…"
-        />
-      </Section>
-
-      <Section title="Introduction">
-        <RichTextEditor
-          value={book.intro ?? ''}
-          onChange={(html) => onChange({ intro: html })}
-          placeholder="Open the story with an introduction…"
-        />
-      </Section>
-    </motion.div>
-  );
-}
-
-// ── Chapter / Page editing panel ────────────────────────────
-interface ChapterPanelProps {
-  chapters: Chapter[];
-  currentChapterIndex: number;
-  onSelectChapter: (i: number) => void;
-  currentChapter?: Chapter;
-  pages: Page[];
-  currentPageIndex: number;
-  onSelectPage: (i: number) => void;
-  currentPage?: Page;
-  loading: boolean;
-  onChangeChapter: (patch: Partial<Chapter>) => void;
-  onChangePage: (patch: Partial<Page>) => void;
-}
-
-function ChapterPanel({
-  chapters, currentChapterIndex, onSelectChapter,
-  currentChapter, pages, currentPageIndex, onSelectPage,
-  currentPage, loading, onChangeChapter, onChangePage,
-}: ChapterPanelProps) {
-  if (!currentChapter) {
-    return <p className="text-slate-500 font-avenir">No chapters yet.</p>;
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-    >
-      {/* Chapter selector */}
-      <div className="mb-6 bg-white rounded-xl border border-slate-200 p-4">
-        <FieldLabel>Chapter</FieldLabel>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onSelectChapter(Math.max(0, currentChapterIndex - 1))}
-            disabled={currentChapterIndex === 0}
-            className="p-2 text-slate-600 hover:bg-slate-100 rounded disabled:opacity-30"
-            aria-label="Previous chapter"
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <select
-            value={currentChapterIndex}
-            onChange={(e) => onSelectChapter(Number(e.target.value))}
-            className="flex-1 px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 bg-white"
-          >
-            {chapters.map((c, i) => (
-              <option key={c.id} value={i}>
-                Chapter {c.number}: {c.title}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => onSelectChapter(Math.min(chapters.length - 1, currentChapterIndex + 1))}
-            disabled={currentChapterIndex === chapters.length - 1}
-            className="p-2 text-slate-600 hover:bg-slate-100 rounded disabled:opacity-30"
-            aria-label="Next chapter"
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-      </div>
-
-      <Section title="Chapter Details">
-        <div className="mb-4">
-          <FieldLabel>Title</FieldLabel>
-          <input
-            type="text"
-            value={currentChapter.title}
-            onChange={(e) => onChangeChapter({ title: e.target.value })}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-          />
-        </div>
-        <div>
-          <FieldLabel>Lede / subtitle</FieldLabel>
-          <input
-            type="text"
-            value={currentChapter.lede ?? ''}
-            onChange={(e) => onChangeChapter({ lede: e.target.value })}
-            placeholder="A short subtitle for this chapter…"
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-          />
-        </div>
-      </Section>
-
-      {/* Page selector */}
-      {loading ? (
-        <p className="text-slate-500 font-avenir">Loading pages…</p>
-      ) : pages.length === 0 ? (
-        <p className="text-slate-500 font-avenir">This chapter has no pages yet.</p>
-      ) : (
-        <>
-          <div className="mb-6 bg-white rounded-xl border border-slate-200 p-4">
-            <FieldLabel>Page</FieldLabel>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => onSelectPage(Math.max(0, currentPageIndex - 1))}
-                disabled={currentPageIndex === 0}
-                className="p-2 text-slate-600 hover:bg-slate-100 rounded disabled:opacity-30"
-                aria-label="Previous page"
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <select
-                value={currentPageIndex}
-                onChange={(e) => onSelectPage(Number(e.target.value))}
-                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 bg-white"
-              >
-                {pages.map((p, i) => (
-                  <option key={p.id} value={i}>
-                    Page {i + 1}{p.subtitle ? ` — ${p.subtitle.slice(0, 60)}` : ''}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => onSelectPage(Math.min(pages.length - 1, currentPageIndex + 1))}
-                disabled={currentPageIndex === pages.length - 1}
-                className="p-2 text-slate-600 hover:bg-slate-100 rounded disabled:opacity-30"
-                aria-label="Next page"
-              >
-                <ChevronRight size={18} />
-              </button>
-            </div>
-          </div>
-
-          {currentPage && (
-            <PageEditor page={currentPage} onChange={onChangePage} />
-          )}
-        </>
-      )}
-    </motion.div>
-  );
-}
-
-function PageEditor({
-  page, onChange,
-}: { page: Page; onChange: (patch: Partial<Page>) => void }) {
-  return (
-    <>
-      <Section title="Page Heading">
-        <FieldLabel>Subtitle</FieldLabel>
-        <input
-          type="text"
-          value={page.subtitle ?? ''}
-          onChange={(e) => onChange({ subtitle: e.target.value })}
-          placeholder="A heading for this page…"
-          className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-        />
-      </Section>
-
-      <Section title="Story Content">
-        <RichTextEditor
-          value={page.content ?? ''}
-          onChange={(html) => onChange({ content: html })}
-          placeholder="Write the story…"
-        />
-      </Section>
-
-      <Section title="Pull Quote">
-        <FieldLabel>Quote</FieldLabel>
-        <RichTextEditor
-          value={page.quote ?? ''}
-          onChange={(html) => onChange({ quote: html })}
-          placeholder="An optional pull quote for this page…"
-          hideToolbar
-        />
-        <div className="mt-4">
-          <FieldLabel>Attribution</FieldLabel>
-          <input
-            type="text"
-            value={page.quote_attribute ?? ''}
-            onChange={(e) => onChange({ quote_attribute: e.target.value })}
-            placeholder="— Who said it"
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-          />
-        </div>
-      </Section>
-
-      {page.image_url && (
-        <Section title="Image Caption">
-          <div className="flex gap-4">
-            <img
-              src={page.image_url}
-              alt=""
-              className="w-32 h-32 object-cover rounded-lg flex-shrink-0"
-            />
-            <div className="flex-1">
-              <FieldLabel>Caption</FieldLabel>
-              <input
-                type="text"
-                value={page.image_caption ?? ''}
-                onChange={(e) => onChange({ image_caption: e.target.value })}
-                placeholder="A caption for this image…"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg font-avenir text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
-              />
-              <p className="mt-2 text-xs text-slate-400 font-avenir">
-                Image uploading is managed elsewhere — only the caption is editable here.
-              </p>
-            </div>
-          </div>
-        </Section>
-      )}
-    </>
+    <div className="p-10 text-center">
+      <p className="text-slate-500 font-avenir">Loading…</p>
+    </div>
   );
 }
