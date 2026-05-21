@@ -238,4 +238,38 @@
       max-width: 100%;
     }
   }
+
+  /* ============================================================
+     TipTap editor styles
+     ============================================================ */
+
+  /* Placeholder text for empty paragraphs */
+  .rich-text-editor .ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: left;
+    color: #94a3b8;
+    pointer-events: none;
+    height: 0;
+    font-style: italic;
+  }
+
+  /* Selection highlight */
+  .rich-text-editor .ProseMirror ::selection {
+    background: rgba(251, 191, 36, 0.3);
+  }
+
+  /* Remove focus outline on the contenteditable itself
+     (the wrapper has its own focus ring) */
+  .rich-text-editor .ProseMirror:focus {
+    outline: none;
+  }
+
+  /* Links inside the editor get a subtle underline so the user can
+     see them, even though links don't open on click while editing */
+  .rich-text-editor .ProseMirror a {
+    color: #1d4ed8;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
 }
