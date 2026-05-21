@@ -54,8 +54,20 @@ export default function RichTextEditor({
     },
     editorProps: {
       attributes: {
-        class: `markdown-body font-lora text-slate-800 leading-body-relaxed body-tracking
-                focus:outline-none min-h-[200px] p-4 ${contentClassName}`,
+        // IMPORTANT: must be a single-line string with no newlines/tabs.
+        // ProseMirror passes this to classList.add(), which throws
+        // DOMException if any token contains whitespace.
+        class: [
+          'markdown-body',
+          'font-lora',
+          'text-slate-800',
+          'leading-body-relaxed',
+          'body-tracking',
+          'focus:outline-none',
+          'min-h-[200px]',
+          'p-4',
+          contentClassName,
+        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(),
       },
     },
   });
