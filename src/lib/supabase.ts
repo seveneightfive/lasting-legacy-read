@@ -10,6 +10,7 @@ export interface Book {
   image_url?: string; dedication?: string; intro?: string;
   created_at?: string; date_published?: string; view_count?: number;
   filloutform_link?: string; user?: string;
+  edit_pin?: string;
 }
 export interface Chapter {
   id: number; title: string; lede?: string; book_id: number;
@@ -31,5 +32,16 @@ export interface GuestbookEntry {
   id: number; message?: string; private?: string; recording?: string;
   guest?: string; book_id?: number; created_at?: string;
   user?: string; guest_email?: string;
+}
+export interface PageRevision {
+  id: number;
+  page_id?: number;
+  chapter_id?: number;
+  book_id?: number;
+  field: string;
+  previous_value?: string;
+  new_value?: string;
+  edit_pin?: string;
+  created_at?: string;
 }
 export type ChapterWithPages = Chapter & { pages: Page[]; };
