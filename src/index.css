@@ -267,6 +267,24 @@
     width: 100%;
   }
 
+
+
+  /* Caption textarea (v7.2 — replaces the input for multi-line captions) */
+  .rich-text-editor .ProseMirror figure.figure-node textarea.figure-caption-input {
+    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+    /* Match the reader's figcaption styling so editor and reader look the same */
+    font-size: 0.875rem;
+    line-height: 1.5;
+    /* Progressive enhancement — supported browsers auto-size, others fall
+       back to the JS height adjustment in the component */
+    field-sizing: content;
+    /* Hard cap so a comically long caption doesn't push everything offscreen */
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+
+  
   /* ============================================================
      NEW: Figure NodeView styles (the editor side of <figure>)
      ============================================================ */
