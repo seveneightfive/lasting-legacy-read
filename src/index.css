@@ -327,4 +327,35 @@
     outline-offset: 4px;
     border-radius: 0.5rem;
   }
+
+  /* ============================================================
+     v6 — Pairing-mode visual states for inline figures
+     ============================================================ */
+
+  /* Pairing-mode source figure — currently waiting for a partner */
+  .rich-text-editor .ProseMirror figure.figure-pairing-source {
+    outline: 3px solid rgb(245 158 11); /* amber-500 */
+    outline-offset: 4px;
+    border-radius: 0.5rem;
+    animation: figure-pulse 1.6s ease-in-out infinite;
+  }
+
+  /* Candidate target figures during pairing — subtle highlight on hover */
+  .rich-text-editor .ProseMirror figure.figure-pairing-target {
+    cursor: pointer;
+    transition: outline-color 0.15s;
+    outline: 2px dashed rgb(251 191 36 / 0.5);
+    outline-offset: 4px;
+    border-radius: 0.5rem;
+  }
+  .rich-text-editor .ProseMirror figure.figure-pairing-target:hover {
+    outline-color: rgb(245 158 11);
+    outline-style: solid;
+  }
+
+  @keyframes figure-pulse {
+    0%, 100% { outline-color: rgb(245 158 11); }
+    50%      { outline-color: rgb(252 211 77); }
+  }
+
 }
