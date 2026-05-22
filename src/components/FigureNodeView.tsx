@@ -306,7 +306,6 @@ export default function FigureNodeView({
       data-pairing-source={iAmPairingSource ? 'true' : 'false'}
       data-pairing-target-candidate={someoneElseIsPairing && layout === 'single' ? 'true' : 'false'}
       className={`figure-node relative my-6
-        ${layout === 'side-by-side' ? 'figure-grid-2' : ''}
         ${iAmPairingSource ? 'figure-pairing-source' : ''}
         ${someoneElseIsPairing && layout === 'single' ? 'figure-pairing-target cursor-pointer' : ''}`}
       onMouseEnter={() => setHovered(true)}
