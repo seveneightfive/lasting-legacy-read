@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import { Node as PMNode } from '@tiptap/pm/model';
 import {
@@ -16,19 +16,19 @@ interface FigureImage {
 }
 
 /**
- * Renders a figure inside the editor.
- *
- * Notable v6 changes:
- *   1. Toolbar is INSIDE the figure (top-2), not floating above with a hover
- *      gap. Closes the cursor-hover-bridge problem.
- *   2. New "Pair with..." button in the toolbar when layout === 'single':
- *      starts targeting mode. The next figure clicked becomes the partner;
- *      captions are joined with " — ".
- *   3. When this figure is a candidate target (another figure is the source
- *      and we're not it), the figure displays a "click to pair" overlay.
+ * v7 changes vs v6:
+ *  - Toolbar shows on `hovered` only (dropping `selected`), because TipTap's
+ *    NodeViewProps.selected is unreliable for non-atom nodes with content.
+ *    Hover is sufficient for discovery.
+ *  - Pairing mode auto-resets if the source position is stale on mount
+ *    (defensive — prevents a stuck pairing state from breaking the UI).
+ *  - The per-image hover overlay now uses local state rather than relying
+ *    on group-hover Tailwind utilities, which were getting unset by other
+ *    Tailwind classes in a way I couldn't pin down. Explicit state is more
+ *    reliable.
  */
 export default function FigureNodeView({
-  node, deleteNode, editor, selected, getPos,
+  node, deleteNode, editor, getPos,
 }: NodeViewProps) {
   const layout = (node.attrs.layout ?? 'single') as Layout;
   const bookSlug = (editor.extensionManager.extensions.find(
@@ -52,18 +52,32 @@ export default function FigureNodeView({
   // ── State ──────────────────────────────────────────────────────
   const { upload, uploading } = useImageUpload({ folder: bookSlug });
   const [hovered, setHovered] = useState(false);
+  const [hoveredImageIndex, setHoveredImageIndex] = useState<number | null>(null);
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const captionInputRef = useRef<HTMLInputElement>(null);
 
   const pairing = usePairingMode();
   const myPos = typeof getPos === 'function' ? getPos() : -1;
   const iAmPairingSource = pairing.sourcePos !== null && pairing.sourcePos === myPos;
   const someoneElseIsPairing = pairing.sourcePos !== null && pairing.sourcePos !== myPos;
 
-  const showControls = (hovered || selected) && !pairing.sourcePos;
+  // Defensive: if pairing mode was started but the source figure no longer
+  // exists in the document (e.g. user refreshed, navigated, deleted that
+  // figure), the singleton's sourcePos is stale. Reset on mount.
+  useEffect(() => {
+    if (pairing.sourcePos !== null) {
+      const sourceNode = editor.state.doc.nodeAt(pairing.sourcePos);
+      if (!sourceNode || sourceNode.type.name !== 'figure') {
+        pairingMode.end();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Image transactions (replace / remove / append) ─────────────
+  const showControls = hovered && !pairing.sourcePos;
+  const showPairingTargetUI = someoneElseIsPairing && layout === 'single' && hovered;
+
+  // ── Image transactions ─────────────────────────────────────────
   const replaceImageAt = (idx: number, newSrc: string) => {
     if (myPos < 0) return;
     const tr = editor.state.tr;
@@ -120,7 +134,6 @@ export default function FigureNodeView({
     if (myPos < 0) return;
     const tr = editor.state.tr;
     const schema = editor.schema;
-    // Find position just before figureCaption (or end)
     let offset = 1;
     let insertAt = -1;
     node.content.forEach((child) => {
@@ -184,7 +197,6 @@ export default function FigureNodeView({
     if (layout === 'single') {
       handleAddSecondImage();
     } else {
-      // Drop the second image
       if (myPos < 0) return;
       const tr = editor.state.tr;
       let offset = 1;
@@ -207,7 +219,7 @@ export default function FigureNodeView({
     }
   };
 
-  // ── PAIRING MODE ────────────────────────────────────────────────
+  // ── Pairing mode ───────────────────────────────────────────────
   const startPairing = () => {
     if (myPos < 0) return;
     pairingMode.start(myPos);
@@ -217,8 +229,6 @@ export default function FigureNodeView({
     if (pairing.sourcePos === null || myPos < 0) return;
     if (pairing.sourcePos === myPos) return;
 
-    // The source figure (the one that initiated pairing) and us (the target).
-    // We'll merge them: combined figure goes at the source position.
     const doc = editor.state.doc;
     const sourceNode = doc.nodeAt(pairing.sourcePos);
     const targetNode = node;
@@ -228,7 +238,6 @@ export default function FigureNodeView({
       return;
     }
 
-    // Read source's first image + caption
     let sourceImage: { src: string; alt: string | null } | null = null;
     let sourceCaption = '';
     sourceNode.content.forEach((c) => {
@@ -239,7 +248,6 @@ export default function FigureNodeView({
       }
     });
 
-    // Read target's first image + caption
     let targetImage: { src: string; alt: string | null } | null = null;
     let targetCaption = '';
     targetNode.content.forEach((c) => {
@@ -255,11 +263,9 @@ export default function FigureNodeView({
       return;
     }
 
-    // Local references after the guard so TS knows they're non-null
-    const srcImg: { src: string; alt: string | null } = sourceImage;
-    const tgtImg: { src: string; alt: string | null } = targetImage;
+    const srcImg = sourceImage;
+    const tgtImg = targetImage;
 
-    // Combine captions with " — "
     const combinedCaption = [sourceCaption.trim(), targetCaption.trim()]
       .filter(Boolean)
       .join(' \u2014 ');
@@ -276,24 +282,15 @@ export default function FigureNodeView({
       ]
     );
 
-    // Build a transaction that deletes both originals and inserts the merged
-    // figure at the source position. ProseMirror's Transaction does NOT
-    // automatically remap positions across steps — we have to use
-    // tr.mapping.map() to translate original positions to post-step positions.
     const tr = editor.state.tr;
     const sourcePos = pairing.sourcePos;
     const targetPos = myPos;
 
-    // Step 1: delete the figure that comes LATER in the document.
-    // This keeps positions before it valid for step 2.
     const [firstPos, firstSize, secondPos, secondSize] = targetPos > sourcePos
       ? [sourcePos, sourceNode.nodeSize, targetPos, targetNode.nodeSize]
       : [targetPos, targetNode.nodeSize, sourcePos, sourceNode.nodeSize];
 
     tr.delete(secondPos, secondPos + secondSize);
-
-    // Step 2: replace the earlier figure (whose position is unchanged by step 1
-    // because we only deleted content AFTER it) with the merged figure.
     tr.replaceWith(firstPos, firstPos + firstSize, mergedFigure);
 
     editor.view.dispatch(tr);
@@ -305,15 +302,16 @@ export default function FigureNodeView({
     <NodeViewWrapper
       as="figure"
       data-layout={layout}
-      className={`figure-node relative my-6 group
+      data-hovered={hovered ? 'true' : 'false'}
+      data-pairing-source={iAmPairingSource ? 'true' : 'false'}
+      data-pairing-target-candidate={someoneElseIsPairing && layout === 'single' ? 'true' : 'false'}
+      className={`figure-node relative my-6
         ${layout === 'side-by-side' ? 'figure-grid-2' : ''}
-        ${selected ? 'figure-selected' : ''}
         ${iAmPairingSource ? 'figure-pairing-source' : ''}
         ${someoneElseIsPairing && layout === 'single' ? 'figure-pairing-target cursor-pointer' : ''}`}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseLeave={() => { setHovered(false); setHoveredImageIndex(null); }}
       onClick={(e) => {
-        // If we're a candidate target in pairing mode, click = complete pair
         if (someoneElseIsPairing && layout === 'single') {
           e.preventDefault();
           e.stopPropagation();
@@ -321,7 +319,7 @@ export default function FigureNodeView({
         }
       }}
     >
-      {/* Pairing-mode source banner (shown on the source figure) */}
+      {/* Source banner */}
       {iAmPairingSource && (
         <div
           contentEditable={false}
@@ -340,8 +338,8 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Pairing-mode target hint (shown on candidate figures while hovered) */}
-      {someoneElseIsPairing && layout === 'single' && hovered && (
+      {/* Pairing target hint */}
+      {showPairingTargetUI && (
         <div
           contentEditable={false}
           className="absolute inset-0 z-20 flex items-center justify-center
@@ -354,7 +352,7 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Normal toolbar — inside the figure, no hover gap */}
+      {/* Main toolbar — inside figure, top */}
       {showControls && (
         <div
           contentEditable={false}
@@ -364,7 +362,7 @@ export default function FigureNodeView({
         >
           <button
             type="button"
-            onClick={toggleLayout}
+            onClick={(e) => { e.stopPropagation(); toggleLayout(); }}
             disabled={uploading}
             className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-avenir text-white
               hover:bg-slate-700 rounded-full transition-colors disabled:opacity-50"
@@ -378,7 +376,7 @@ export default function FigureNodeView({
               <div className="w-px h-4 bg-slate-700" />
               <button
                 type="button"
-                onClick={startPairing}
+                onClick={(e) => { e.stopPropagation(); startPairing(); }}
                 className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-avenir text-white
                   hover:bg-slate-700 rounded-full transition-colors"
                 title="Pair this image with another single image elsewhere in the story"
@@ -408,12 +406,20 @@ export default function FigureNodeView({
         className={`figure-images ${layout === 'side-by-side' ? 'grid grid-cols-2 gap-3' : ''}`}
       >
         {images.map((img, idx) => (
-          <div key={`${idx}-${img.src}`} className="relative">
+          <div
+            key={`${idx}-${img.src}`}
+            className="relative"
+            onMouseEnter={() => setHoveredImageIndex(idx)}
+            onMouseLeave={() => setHoveredImageIndex(null)}
+          >
             <img src={img.src} alt={img.alt ?? ''} className="w-full rounded-lg" />
-            {/* Per-image overlay (replace / remove) — hidden during pairing mode */}
-            {showControls && (
-              <div className="absolute inset-0 flex items-center justify-center gap-2
-                bg-black/0 group-hover:bg-black/30 transition-colors opacity-0 group-hover:opacity-100">
+            {/* Per-image overlay: only when this specific image is hovered
+                AND not in pairing mode. Uses local state instead of group-hover. */}
+            {hoveredImageIndex === idx && !pairing.sourcePos && (
+              <div
+                className="absolute inset-0 flex items-center justify-center gap-2
+                  bg-black/30 transition-colors"
+              >
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); handleReplaceClick(idx); }}
@@ -445,12 +451,10 @@ export default function FigureNodeView({
 
       {/* Caption */}
       <input
-        ref={captionInputRef}
         type="text"
         value={captionText}
         onChange={(e) => updateCaption(e.target.value)}
         placeholder="Add a caption…"
-        // Don't let clicks on the caption bubble up and trigger pairing
         onClick={(e) => e.stopPropagation()}
         className="figure-caption-input w-full mt-2 px-2 py-1 text-sm font-lora italic text-slate-600 text-center
           bg-transparent border-0 border-b border-transparent
