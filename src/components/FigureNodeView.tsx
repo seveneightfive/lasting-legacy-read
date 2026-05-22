@@ -448,17 +448,11 @@ export default function FigureNodeView({
         ))}
       </div>
 
-      {/* Caption */}
-      <input
-        type="text"
+      {/* Caption — auto-growing textarea so long captions wrap and the
+          editor shows the full text (just like the reader will). */}
+      <AutoGrowCaption
         value={captionText}
-        onChange={(e) => updateCaption(e.target.value)}
-        placeholder="Add a caption…"
-        onClick={(e) => e.stopPropagation()}
-        className="figure-caption-input w-full mt-2 px-2 py-1 text-sm font-lora italic text-slate-600 text-center
-          bg-transparent border-0 border-b border-transparent
-          hover:border-slate-200 focus:border-slate-400 focus:outline-none
-          placeholder:text-slate-400 placeholder:not-italic transition-colors"
+        onChange={updateCaption}
       />
 
       <input
@@ -469,5 +463,50 @@ export default function FigureNodeView({
         className="hidden"
       />
     </NodeViewWrapper>
+  );
+}
+
+/**
+ * Caption editor — a textarea styled like a <figcaption>, that grows with
+ * its content. Single-line inputs were truncating long multi-line captions;
+ * a textarea wraps naturally.
+ *
+ * We size by reading scrollHeight after each change and setting style.height
+ * to match. This works in every browser; `field-sizing: content` (newer CSS)
+ * is added in index.css as a progressive enhancement.
+ */
+function AutoGrowCaption({
+  value, onChange,
+}: { value: string; onChange: (v: string) => void }) {
+  const ref = React.useRef<HTMLTextAreaElement>(null);
+
+  // Re-fit any time value changes (typed, programmatically set, or initial)
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Allow Enter for line breaks inside the caption.
+        // Stop propagation so it doesn't bubble out to the editor's
+        // paragraph-creating Enter handler.
+        if (e.key === 'Enter') e.stopPropagation();
+      }}
+      placeholder="Add a caption…"
+      rows={1}
+      className="figure-caption-input w-full mt-2 px-2 py-1 text-sm font-lora italic text-slate-600 text-center
+        bg-transparent border-0 border-b border-transparent
+        hover:border-slate-200 focus:border-slate-400 focus:outline-none
+        placeholder:text-slate-400 placeholder:not-italic transition-colors
+        resize-none overflow-hidden leading-relaxed"
+    />
   );
 }
