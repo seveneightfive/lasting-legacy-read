@@ -14,18 +14,6 @@ interface FigureImage {
   alt: string | null;
 }
 
-/**
- * v8 — images are rendered by ProseMirror from the schema's renderHTML,
- * NOT by React. The previous version tried to paint images in React
- * which conflicted with ProseMirror's own rendering of the schema
- * content, resulting in images ending up inside the figcaption.
- *
- * Current architecture:
- *   - Schema renderHTML produces: <figure> <img> <img> <figcaption /> </figure>
- *   - The NodeView wraps that and adds: toolbar, hover overlays, caption placeholder
- *   - CSS uses `display: grid` on the figure itself for side-by-side layout
- *   - The figcaption uses NodeViewContent so the caption text remains editable
- */
 export default function FigureNodeView({
   node, deleteNode, editor, getPos,
 }: NodeViewProps) {
@@ -36,7 +24,6 @@ export default function FigureNodeView({
     (e) => e.name === 'figure'
   )?.options?.bookSlug ?? '') as string;
 
-  // ── State ──────────────────────────────────────────────────────
   const { upload, uploading } = useImageUpload({ folder: bookSlug });
   const [hovered, setHovered] = useState(false);
   const [hoveredImageIndex, setHoveredImageIndex] = useState<number | null>(null);
@@ -48,7 +35,6 @@ export default function FigureNodeView({
   const iAmPairingSource = pairing.sourcePos !== null && pairing.sourcePos === myPos;
   const someoneElseIsPairing = pairing.sourcePos !== null && pairing.sourcePos !== myPos;
 
-  // Defensive cleanup of stale pairing state on mount
   useEffect(() => {
     if (pairing.sourcePos !== null) {
       const sourceNode = editor.state.doc.nodeAt(pairing.sourcePos);
@@ -62,7 +48,6 @@ export default function FigureNodeView({
   const showControls = hovered && !pairing.sourcePos;
   const showPairingTargetUI = someoneElseIsPairing && layout === 'single' && hovered;
 
-  // ── Image mutations via attribute updates ──────────────────────
   const updateAttrs = (newAttrs: Record<string, unknown>) => {
     if (myPos < 0) return;
     const tr = editor.state.tr.setNodeMarkup(myPos, undefined, {
@@ -93,7 +78,6 @@ export default function FigureNodeView({
     updateAttrs({ images: next, layout: 'side-by-side' });
   };
 
-  // ── File picker ────────────────────────────────────────────────
   const handleReplaceClick = (idx: number) => {
     setReplacingIndex(idx);
     fileInputRef.current?.click();
@@ -119,7 +103,6 @@ export default function FigureNodeView({
     if (layout === 'single') {
       handleAddSecondImage();
     } else {
-      // side-by-side → single: keep first image, drop the rest
       updateAttrs({
         images: images.slice(0, 1),
         layout: 'single',
@@ -127,7 +110,6 @@ export default function FigureNodeView({
     }
   };
 
-  // ── Pairing mode ───────────────────────────────────────────────
   const startPairing = () => {
     if (myPos < 0) return;
     pairingMode.start(myPos);
@@ -184,7 +166,6 @@ export default function FigureNodeView({
     pairingMode.end();
   };
 
-  // ── Render ─────────────────────────────────────────────────────
   return (
     <NodeViewWrapper
       as="figure"
@@ -206,11 +187,10 @@ export default function FigureNodeView({
         }
       }}
     >
-      {/* Pairing source banner */}
       {iAmPairingSource && (
         <div
           contentEditable={false}
-          className="absolute top-2 left-1/2 -translate-x-1/2 z-20
+          className="figure-banner absolute top-2 left-1/2 -translate-x-1/2 z-20
             flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-full shadow-lg text-sm font-avenir"
         >
           <Loader2 size={14} className="animate-pulse" />
@@ -225,7 +205,6 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Pairing target hint */}
       {showPairingTargetUI && (
         <div
           contentEditable={false}
@@ -239,7 +218,6 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Main toolbar */}
       {showControls && (
         <div
           contentEditable={false}
@@ -287,10 +265,49 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Caption — editable inline ProseMirror content with a sibling
-          placeholder shown when empty. ProseMirror also renders the
-          schema's <img> children directly into the figure here; the
-          NodeViewContent below anchors the caption to its own slot. */}
+      {images.map((img, idx) => (
+        <div
+          key={`${idx}-${img.src}`}
+          contentEditable={false}
+          className="figure-image-slot relative"
+          onMouseEnter={() => setHoveredImageIndex(idx)}
+          onMouseLeave={() => setHoveredImageIndex(null)}
+        >
+          <img
+            src={img.src}
+            alt={img.alt ?? ''}
+            className="figure-image"
+          />
+          {hoveredImageIndex === idx && !pairing.sourcePos && (
+            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/30 rounded-lg transition-colors">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleReplaceClick(idx); }}
+                disabled={uploading}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-800
+                  rounded-full text-xs font-avenir hover:bg-slate-100 shadow-lg disabled:opacity-50"
+              >
+                {uploading && replacingIndex === idx ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                Replace
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); removeImageAt(idx); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-red-700
+                  rounded-full text-xs font-avenir hover:bg-red-50 shadow-lg"
+              >
+                <X size={12} />
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+
       <div className="figure-caption-wrapper relative">
         {node.textContent.trim() === '' && (
           <div
