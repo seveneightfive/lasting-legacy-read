@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Menu, X, SquarePen as PenSquare, Download, Loader2 } from 'lucide-react';
-import { Book, Chapter } from '../lib/supabase';
+import { Menu, X, SquarePen as PenSquare, Download, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
+import { supabase, Book, Chapter, Page } from '../lib/supabase';
 import { fetchCompleteBookData } from '../utils/bookDataFetcher';
 import { generateBookPDF } from '../utils/pdfBookGenerator';
 
@@ -12,8 +12,10 @@ interface NavigationMenuProps {
   book: Book;
   chapters: Chapter[];
   currentChapterIndex: number;
+  currentPageIndex?: number;
   currentState: string;
   onNavigateToChapter: (index: number) => void;
+  onNavigateToPage?: (chapterIndex: number, pageIndex: number) => void;
   onNavigateToGallery: () => void;
   onNavigateToGuestbook: () => void;
   onNavigateToTitle?: () => void;
@@ -23,8 +25,10 @@ export default function NavigationMenu({
   book,
   chapters,
   currentChapterIndex,
+  currentPageIndex = 0,
   currentState,
   onNavigateToChapter,
+  onNavigateToPage,
   onNavigateToGallery,
   onNavigateToGuestbook,
   onNavigateToTitle,
@@ -40,17 +44,78 @@ export default function NavigationMenu({
   const [pinError, setPinError] = useState('');
   const [pinLoading, setPinLoading] = useState(false);
 
+  // ── TOC expansion + page cache ───────────────────────────────
+  // Which chapters have their page list expanded
+  const [expandedChapters, setExpandedChapters] = useState<Record<number, boolean>>({});
+  // Cache pages per chapter so we don't re-fetch on every expand
+  const [pagesByChapter, setPagesByChapter] = useState<Record<number, Page[]>>({});
+  const [loadingPagesFor, setLoadingPagesFor] = useState<Set<number>>(new Set());
+
   const logoUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/site-images/LLO-SiteLogo.png`;
 
+  // Auto-expand the currently-active chapter when the menu opens, so the
+  // reader's current location is visible without manual digging.
+  useEffect(() => {
+    if (isOpen && currentState.includes('chapter') && chapters[currentChapterIndex]) {
+      const activeId = chapters[currentChapterIndex].id;
+      setExpandedChapters(prev => (prev[activeId] ? prev : { ...prev, [activeId]: true }));
+      if (!pagesByChapter[activeId]) {
+        void loadPagesForChapter(activeId);
+      }
+    }
+  }, [isOpen, currentChapterIndex, currentState, chapters]);
+
+  const loadPagesForChapter = async (chapterId: number) => {
+    if (pagesByChapter[chapterId] || loadingPagesFor.has(chapterId)) return;
+    setLoadingPagesFor(prev => new Set(prev).add(chapterId));
+    try {
+      const { data, error } = await supabase
+        .from('pages')
+        .select('*')
+        .eq('chapter_id', chapterId)
+        .order('sort_order', { ascending: true });
+      if (error) throw error;
+      setPagesByChapter(prev => ({ ...prev, [chapterId]: data || [] }));
+    } catch (error) {
+      console.error('Error loading pages for chapter:', error);
+      // Cache an empty array so we don't retry forever on errors
+      setPagesByChapter(prev => ({ ...prev, [chapterId]: [] }));
+    } finally {
+      setLoadingPagesFor(prev => {
+        const next = new Set(prev);
+        next.delete(chapterId);
+        return next;
+      });
+    }
+  };
+
+  const toggleChapterExpansion = (chapterId: number) => {
+    const willExpand = !expandedChapters[chapterId];
+    setExpandedChapters(prev => ({ ...prev, [chapterId]: willExpand }));
+    if (willExpand && !pagesByChapter[chapterId]) {
+      void loadPagesForChapter(chapterId);
+    }
+  };
+
   const handleTitleClick = () => {
-  if (onNavigateToTitle) {
-    onNavigateToTitle();
-    setIsOpen(false);
-  }
-};
-  
+    if (onNavigateToTitle) {
+      onNavigateToTitle();
+      setIsOpen(false);
+    }
+  };
+
   const handleChapterClick = (index: number) => {
     onNavigateToChapter(index);
+    setIsOpen(false);
+  };
+
+  const handlePageClick = (chapterIndex: number, pageIndex: number) => {
+    if (onNavigateToPage) {
+      onNavigateToPage(chapterIndex, pageIndex);
+    } else {
+      // Fallback if parent hasn't wired up page nav yet
+      onNavigateToChapter(chapterIndex);
+    }
     setIsOpen(false);
   };
 
@@ -87,7 +152,7 @@ export default function NavigationMenu({
     setPin('');
     setPinError('');
     setShowPinModal(true);
-    setIsOpen(false); // close nav drawer first
+    setIsOpen(false);
   };
 
   const handlePinInput = (index: number, value: string) => {
@@ -139,6 +204,9 @@ export default function NavigationMenu({
     }
   };
 
+  const isChapterActive = (index: number) =>
+    currentState.includes('chapter') && currentChapterIndex === index;
+
   return (
     <>
       {/* ── Hamburger button ── */}
@@ -183,50 +251,123 @@ export default function NavigationMenu({
 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="mb-8">
-  {onNavigateToTitle ? (
-    <button
-      onClick={handleTitleClick}
-      className="text-left w-full group"
-      aria-label="Return to title page"
-    >
-      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight group-hover:text-slate-600 transition-colors">
-        {book.title}
-      </h3>
-      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
-    </button>
-  ) : (
-    <>
-      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight">
-        {book.title}
-      </h3>
-      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
-    </>
-  )}
-</div>
-
-                <nav className="space-y-2">
-                  {chapters.map((chapter, index) => (
+                  {onNavigateToTitle ? (
                     <button
-                      key={chapter.id}
-                      onClick={() => handleChapterClick(index)}
-                      className={`w-full text-left p-3 rounded-lg transition-colors ${
-                        currentState.includes('chapter') && currentChapterIndex === index
-                          ? 'bg-slate-800 text-white'
-                          : 'hover:bg-slate-100 text-slate-700'
-                      }`}
+                      onClick={handleTitleClick}
+                      className="text-left w-full group"
+                      aria-label="Return to title page"
                     >
-                      <div className="font-avenir">
-                        <div className="text-xs opacity-75 mb-1">Chapter {chapter.number}</div>
-                        <div className="font-medium">{chapter.title}</div>
-                        {chapter.lede && (
-                          <div className="text-xs opacity-75 mt-1">{chapter.lede}</div>
-                        )}
-                      </div>
+                      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight group-hover:text-slate-600 transition-colors">
+                        {book.title}
+                      </h3>
+                      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
                     </button>
-                  ))}
+                  ) : (
+                    <>
+                      <h3 className="text-2xl font-avenir font-bold text-slate-800 mb-2 leading-tight">
+                        {book.title}
+                      </h3>
+                      <p className="text-sm text-slate-600 font-avenir">by {book.author}</p>
+                    </>
+                  )}
+                </div>
+
+                <nav className="space-y-1">
+                  {chapters.map((chapter, chapterIndex) => {
+                    const isExpanded = !!expandedChapters[chapter.id];
+                    const pages = pagesByChapter[chapter.id] || [];
+                    const isLoading = loadingPagesFor.has(chapter.id);
+                    const active = isChapterActive(chapterIndex);
+
+                    return (
+                      <div key={chapter.id}>
+                        {/* Chapter row: expand toggle + navigate */}
+                        <div
+                          className={`flex items-stretch rounded-lg overflow-hidden transition-colors ${
+                            active ? 'bg-slate-800 text-white' : 'hover:bg-slate-100 text-slate-700'
+                          }`}
+                        >
+                          <button
+                            onClick={() => toggleChapterExpansion(chapter.id)}
+                            className={`flex items-center justify-center px-2 ${
+                              active ? 'hover:bg-slate-700' : 'hover:bg-slate-200'
+                            } transition-colors`}
+                            aria-label={isExpanded ? 'Collapse chapter' : 'Expand chapter'}
+                            aria-expanded={isExpanded}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 opacity-75" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 opacity-75" />
+                            )}
+                          </button>
+                          <button
+                            onClick={() => handleChapterClick(chapterIndex)}
+                            className="flex-1 text-left px-2 py-3"
+                          >
+                            <div className="font-avenir">
+                              <div className="text-xs opacity-75 mb-1">Chapter {chapter.number}</div>
+                              <div className="font-medium">{chapter.title}</div>
+                              {chapter.lede && (
+                                <div className="text-xs opacity-75 mt-1">{chapter.lede}</div>
+                              )}
+                            </div>
+                          </button>
+                        </div>
+
+                        {/* Expanded page list */}
+                        <AnimatePresence initial={false}>
+                          {isExpanded && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={{ duration: 0.2, ease: 'easeInOut' }}
+                              className="overflow-hidden"
+                            >
+                              <div className="ml-6 mt-1 mb-2 border-l border-slate-200 pl-3 space-y-0.5">
+                                {isLoading && (
+                                  <div className="py-2 text-xs text-slate-400 font-avenir italic">
+                                    Loading pages…
+                                  </div>
+                                )}
+
+                                {!isLoading && pages.length === 0 && (
+                                  <div className="py-2 text-xs text-slate-400 font-avenir italic">
+                                    No pages yet
+                                  </div>
+                                )}
+
+                                {!isLoading && pages.map((page, pageIndex) => {
+                                  const isCurrentPage =
+                                    currentState === 'chapter-content' &&
+                                    currentChapterIndex === chapterIndex &&
+                                    currentPageIndex === pageIndex;
+
+                                  return (
+                                    <button
+                                      key={page.id}
+                                      onClick={() => handlePageClick(chapterIndex, pageIndex)}
+                                      className={`w-full text-left px-3 py-1.5 rounded-md text-sm font-avenir transition-colors ${
+                                        isCurrentPage
+                                          ? 'bg-slate-200 text-slate-900 font-medium'
+                                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+                                      }`}
+                                    >
+                                      {page.title || `Page ${pageIndex + 1}`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })}
 
                   {chapters.length > 0 && (
-                    <>
+                    <div className="pt-3 mt-3 border-t border-slate-100 space-y-1">
                       <button
                         onClick={handleGalleryClick}
                         className={`w-full text-left p-3 rounded-lg transition-colors ${
@@ -247,13 +388,12 @@ export default function NavigationMenu({
                       >
                         <div className="font-avenir font-medium">Guestbook</div>
                       </button>
-                    </>
+                    </div>
                   )}
                 </nav>
               </div>
 
               <div className="p-6 border-t border-slate-200 space-y-3">
-
                 {/* ── Edit Story button ── */}
                 <button
                   onClick={openPinModal}
@@ -295,7 +435,7 @@ export default function NavigationMenu({
                   </button>
                 )}
 
-                <a
+                
                   href="https://lastinglegacyonline.com"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -331,7 +471,7 @@ export default function NavigationMenu({
               </h2>
               <p className="text-slate-500 text-sm mb-8 text-center leading-relaxed font-avenir">
                 Enter your 4-digit edit PIN.{' '}
-                <a
+                
                   href="https://app.lastinglegacyonline.com"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -342,7 +482,6 @@ export default function NavigationMenu({
                 under your book settings.
               </p>
 
-              {/* 4-box PIN input */}
               <div className="flex gap-3 justify-center mb-6">
                 {[0, 1, 2, 3].map((i) => (
                   <input
@@ -391,4 +530,3 @@ export default function NavigationMenu({
     </>
   );
 }
-
