@@ -9,7 +9,7 @@ import Image from '@tiptap/extension-image';
 import { marked } from 'marked';
 import EditorToolbar from './EditorToolbar';
 import InsertImageDialog, { InlineFigureInsert } from './InsertImageDialog';
-import { Figure, FigureImage, FigureCaption } from './FigureExtension';
+import { Figure } from './FigureExtension';
 import { sanitizeWordPressHtml } from '../../utils/sanitizeWordPressHtml';
 
 interface RichTextEditorProps {
@@ -71,9 +71,7 @@ export default function RichTextEditor({
         HTMLAttributes: { class: 'rounded-lg my-4' },
         allowBase64: false,
       }),
-      // New figure node + its child node types
-      FigureImage,
-      FigureCaption,
+      // Figure node — images live in attrs, caption is inline* content
       Figure.configure({ bookSlug: bookSlug ?? '' }),
     ],
     content: sanitizeWordPressHtml(normalizeToHtml(value)),
@@ -81,14 +79,9 @@ export default function RichTextEditor({
       onChange(editor.getHTML());
     },
     editorProps: {
-      // Reserve space above the caret so ProseMirror doesn't scroll the
-      // caret behind the sticky toolbar when the user hits Enter. ~70px
-      // covers the toolbar height plus a few pixels of breathing room.
-      // (ProseMirror takes a single number applied to all sides.)
       scrollMargin: 80,
       scrollThreshold: 80,
       attributes: {
-        // Single-line — newlines/tabs in classList.add() throw DOMException
         class: [EDITOR_CLASS, contentClassName ?? '']
           .join(' ')
           .replace(/\s+/g, ' ')
@@ -97,7 +90,6 @@ export default function RichTextEditor({
     },
   });
 
-  // Sync external value changes
   useEffect(() => {
     if (!editor) return;
     const incoming = sanitizeWordPressHtml(normalizeToHtml(value));
