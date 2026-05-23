@@ -36,6 +36,24 @@ const KAY_MCFARLAND_SLUG = 'kay-mcfarland';
 // Page at which popup 1 triggers (2nd content page seen)
 const POPUP1_TRIGGER_PAGE = 2;
 
+/**
+ * Returns true only if a field has real, renderable content.
+ * Handles: null, undefined, empty string, whitespace-only string,
+ * empty objects (e.g. empty TipTap docs), and empty arrays.
+ */
+function hasContent(field: unknown): boolean {
+  if (field == null) return false;
+  if (typeof field === 'string') return field.trim().length > 0;
+  if (Array.isArray(field)) return field.length > 0;
+  if (typeof field === 'object') {
+    // Handle TipTap/ProseMirror-style doc nodes
+    const doc = field as { content?: unknown[] };
+    if (Array.isArray(doc.content)) return doc.content.length > 0;
+    return Object.keys(field).length > 0;
+  }
+  return Boolean(field);
+}
+
 export default function BookReader({ book, chapters }: BookReaderProps) {
   const [currentState, setCurrentState] = useState<ReadingState>('cover');
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
@@ -52,6 +70,11 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const currentChapter = chapters[currentChapterIndex];
   const isAtEnd = currentState === 'guestbook' || currentState === 'thank-you';
   const isKayMcFarlandBook = book.slug === KAY_MCFARLAND_SLUG || book.user === KAY_MCFARLAND_SLUG;
+
+  // Normalized content flags — use these everywhere instead of truthy checks
+  const hasDedication = hasContent(book.dedication);
+  const hasIntro = hasContent(book.intro);
+  const hasChapters = chapters.length > 0;
 
   const { showPopup1, showPopup2, dismissPopup1, dismissPopup2 } = useMcFarlandPopups({
     globalPageCount,
@@ -174,41 +197,70 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   };
 
   const handleNext = async () => {
-    incrementPageCount();
+    // Don't allow advance from cover until chapters are loaded.
+    // Without this guard, clicking "Begin Reading" before the async
+    // chapter query resolves results in no state transition (all three
+    // conditions in the cover case fall through), which is the
+    // "Begin Reading reloads the cover" bug.
+    if (currentState === 'cover' && !hasChapters) {
+      return;
+    }
+
+    let advanced = false;
 
     switch (currentState) {
       case 'cover':
-        if (book.dedication) setCurrentState('dedication');
-        else if (book.intro) setCurrentState('intro');
-        else if (chapters.length > 0) setCurrentState('chapter-title');
+        if (hasDedication) {
+          setCurrentState('dedication');
+          advanced = true;
+        } else if (hasIntro) {
+          setCurrentState('intro');
+          advanced = true;
+        } else if (hasChapters) {
+          setCurrentState('chapter-title');
+          advanced = true;
+        }
         break;
 
       case 'dedication':
-        if (book.intro) setCurrentState('intro');
-        else if (chapters.length > 0) setCurrentState('chapter-title');
+        if (hasIntro) {
+          setCurrentState('intro');
+          advanced = true;
+        } else if (hasChapters) {
+          setCurrentState('chapter-title');
+          advanced = true;
+        }
         break;
 
       case 'intro':
-        if (chapters.length > 0) setCurrentState('chapter-title');
+        if (hasChapters) {
+          setCurrentState('chapter-title');
+          advanced = true;
+        }
         break;
 
       case 'chapter-title':
         setCurrentState('chapter-content');
+        advanced = true;
         break;
 
       case 'chapter-content':
         if (currentPageIndex < pages.length - 1) {
           setCurrentPageIndex(currentPageIndex + 1);
+          advanced = true;
         } else {
-          const hasGallery = await checkChapterHasGallery(currentChapter.id);
-          if (hasGallery) {
+          const chapterHasGallery = await checkChapterHasGallery(currentChapter.id);
+          if (chapterHasGallery) {
             fetchChapterGalleryItems(currentChapter.id);
             setCurrentState('chapter-gallery');
+            advanced = true;
           } else if (currentChapterIndex < chapters.length - 1) {
             setCurrentChapterIndex(currentChapterIndex + 1);
             setCurrentState('chapter-title');
+            advanced = true;
           } else {
             setCurrentState('gallery');
+            advanced = true;
           }
         }
         break;
@@ -217,21 +269,31 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         if (currentChapterIndex < chapters.length - 1) {
           setCurrentChapterIndex(currentChapterIndex + 1);
           setCurrentState('chapter-title');
+          advanced = true;
         } else {
           setCurrentState('gallery');
+          advanced = true;
         }
         break;
 
       case 'gallery':
         setCurrentState('guestbook');
+        advanced = true;
         break;
 
       case 'guestbook':
         setCurrentState('thank-you');
+        advanced = true;
         break;
 
       case 'thank-you':
+        // End of book — nothing to advance to
         break;
+    }
+
+    // Only bump the popup counter when the reader actually moved forward
+    if (advanced) {
+      incrementPageCount();
     }
   };
 
@@ -242,7 +304,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         break;
 
       case 'intro':
-        if (book.dedication) setCurrentState('dedication');
+        if (hasDedication) setCurrentState('dedication');
         else setCurrentState('cover');
         break;
 
@@ -250,17 +312,21 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         if (currentChapterIndex > 0) {
           const previousChapterIndex = currentChapterIndex - 1;
           const previousChapterId = chapters[previousChapterIndex].id;
-          const hasGallery = await checkChapterHasGallery(previousChapterId);
+          const previousHasGallery = await checkChapterHasGallery(previousChapterId);
           setCurrentChapterIndex(previousChapterIndex);
-          if (hasGallery) {
+          if (previousHasGallery) {
             fetchChapterGalleryItems(previousChapterId);
             setCurrentState('chapter-gallery');
           } else {
             setCurrentState('chapter-content');
           }
-        } else if (book.intro) setCurrentState('intro');
-        else if (book.dedication) setCurrentState('dedication');
-        else setCurrentState('cover');
+        } else if (hasIntro) {
+          setCurrentState('intro');
+        } else if (hasDedication) {
+          setCurrentState('dedication');
+        } else {
+          setCurrentState('cover');
+        }
         break;
 
       case 'chapter-content':
@@ -274,12 +340,12 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         break;
 
       case 'gallery':
-        if (chapters.length > 0) {
+        if (hasChapters) {
           const lastChapterIndex = chapters.length - 1;
           const lastChapterId = chapters[lastChapterIndex].id;
-          const hasGallery = await checkChapterHasGallery(lastChapterId);
+          const lastHasGallery = await checkChapterHasGallery(lastChapterId);
           setCurrentChapterIndex(lastChapterIndex);
-          if (hasGallery) {
+          if (lastHasGallery) {
             fetchChapterGalleryItems(lastChapterId);
             setCurrentState('chapter-gallery');
           } else {
@@ -333,7 +399,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
 
       {currentState === 'cover' && <BookCover book={book} onNext={handleNext} />}
 
-      {currentState === 'dedication' && book.dedication && (
+      {currentState === 'dedication' && hasDedication && (
         <BookDedication
           book={book}
           dedication={book.dedication}
@@ -342,8 +408,14 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         />
       )}
 
-      {currentState === 'intro' && book.intro && (
-        <BookIntro intro={book.intro} onNext={handleNext} onPrevious={handlePrevious} />
+      {currentState === 'intro' && hasIntro && (
+        <BookIntro
+          intro={book.intro}
+          introImageUrl={book.intro_image_url}
+          introImageCaption={book.intro_image_caption}
+          onNext={handleNext}
+          onPrevious={handlePrevious}
+        />
       )}
 
       {currentState === 'chapter-title' && currentChapter && (
