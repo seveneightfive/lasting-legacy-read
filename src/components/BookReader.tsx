@@ -121,7 +121,9 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       if (pagesResult.error) throw pagesResult.error;
       setPages(pagesResult.data || []);
       setChapterGalleryItems(galleryResult.data || []);
-      setCurrentPageIndex(0);
+      // Note: currentPageIndex is NOT reset here — callers (handleNavigateToChapter,
+      // handleNavigateToPage, forward-nav in handleNext) explicitly control which
+      // page to land on. Resetting here would stomp on deep-links from the TOC.
     } catch (error) {
       console.error('Error fetching pages:', error);
     } finally {
@@ -198,10 +200,6 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
 
   const handleNext = async () => {
     // Don't allow advance from cover until chapters are loaded.
-    // Without this guard, clicking "Begin Reading" before the async
-    // chapter query resolves results in no state transition (all three
-    // conditions in the cover case fall through), which is the
-    // "Begin Reading reloads the cover" bug.
     if (currentState === 'cover' && !hasChapters) {
       return;
     }
@@ -240,6 +238,8 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         break;
 
       case 'chapter-title':
+        // Entering chapter content from the title page — start at page 0
+        setCurrentPageIndex(0);
         setCurrentState('chapter-content');
         advanced = true;
         break;
@@ -256,6 +256,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
             advanced = true;
           } else if (currentChapterIndex < chapters.length - 1) {
             setCurrentChapterIndex(currentChapterIndex + 1);
+            setCurrentPageIndex(0);
             setCurrentState('chapter-title');
             advanced = true;
           } else {
@@ -268,6 +269,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       case 'chapter-gallery':
         if (currentChapterIndex < chapters.length - 1) {
           setCurrentChapterIndex(currentChapterIndex + 1);
+          setCurrentPageIndex(0);
           setCurrentState('chapter-title');
           advanced = true;
         } else {
@@ -366,6 +368,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
 
   const handleNavigateToChapter = (index: number) => {
     setCurrentChapterIndex(index);
+    setCurrentPageIndex(0);  // jumping to a chapter starts you at its title
     setCurrentState('chapter-title');
   };
 
@@ -374,8 +377,8 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     setCurrentPageIndex(pageIndex);
     setCurrentState('chapter-content');
     // The existing useEffect on `chapter-content` will fetch pages for
-    // the new chapter. We pre-seed the page index so when pages arrive
-    // we land on the right one, not page 0.
+    // the new chapter. Since fetchPages no longer resets currentPageIndex,
+    // the target page index is preserved.
   };
 
   const handleNavigateToGallery = () => setCurrentState('gallery');
