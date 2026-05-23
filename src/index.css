@@ -194,8 +194,7 @@
   }
 
   /* ============================================================
-     NEW: Side-by-side figure layout (.figure-grid-2)
-     Inserted via the editor's "Side by side" layout option.
+     Side-by-side figure layout (.figure-grid-2)
      Used by both the editor (TipTap NodeView) AND the reader.
      ============================================================ */
   .markdown-body figure.figure-grid-2 {
@@ -267,46 +266,8 @@
     width: 100%;
   }
 
-  /* Editor-side: when a figure-node has side-by-side layout, lay images
-     out in a grid. The reader uses the `.figure-grid-2` class on the
-     figure itself; the editor uses a wrapping `.figure-images` div, so
-     we need a separate rule here. */
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    align-items: start;
-  }
-
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images > div {
-    min-width: 0; /* prevents grid blowout from long alt text or wide images */
-  }
-
-  @media (max-width: 640px) {
-    .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images {
-      grid-template-columns: 1fr;
-    }
-  }
-
-
-  /* Caption textarea (v7.2 — replaces the input for multi-line captions) */
-  .rich-text-editor .ProseMirror figure.figure-node textarea.figure-caption-input {
-    font-family: 'Lora', Georgia, 'Times New Roman', serif;
-    /* Match the reader's figcaption styling so editor and reader look the same */
-    font-size: 0.875rem;
-    line-height: 1.5;
-    /* Progressive enhancement — supported browsers auto-size, others fall
-       back to the JS height adjustment in the component */
-    field-sizing: content;
-    /* Hard cap so a comically long caption doesn't push everything offscreen */
-    max-height: 200px;
-    overflow-y: auto;
-  }
-
-
-  
   /* ============================================================
-     NEW: Figure NodeView styles (the editor side of <figure>)
+     Figure NodeView styles (the editor side of <figure>)
      ============================================================ */
 
   /* The NodeView wrapper IS the <figure>. Match reader styles. */
@@ -315,13 +276,39 @@
     position: relative;
   }
 
-  /* Single image inside the editor's figure */
-  .rich-text-editor .ProseMirror figure.figure-node .figure-images img {
+  /* Images rendered by ProseMirror from the schema, inside the editor figure */
+  .rich-text-editor .ProseMirror figure.figure-node > img {
     border-radius: 0.5rem;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     width: 100%;
     height: auto;
     object-fit: contain;
+    margin: 0;
+  }
+
+  /* Editor-side side-by-side layout — mirrors the reader's .figure-grid-2 rule */
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    align-items: start;
+  }
+
+  /* Caption wrapper (and bare figcaption) span both columns */
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-caption-wrapper,
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > figcaption {
+    grid-column: 1 / -1;
+  }
+
+  /* Toolbar and pairing banners need to stay positioned across the whole figure */
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-toolbar {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 640px) {
+    .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* The editable caption inside the editor */
@@ -334,7 +321,6 @@
     font-family: 'Lora', Georgia, 'Times New Roman', serif;
     line-height: 1.5;
     min-height: 1.5em;
-    /* When empty, show the placeholder */
     position: relative;
     cursor: text;
     outline: none;
@@ -351,7 +337,8 @@
     background-color: rgba(251, 191, 36, 0.12);
   }
 
-  /* Placeholder text for empty caption */
+  /* Placeholder text for empty caption (fallback — the React component
+     also renders an explicit placeholder div when textContent is empty) */
   .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption.is-empty::before,
   .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption:empty::before {
     content: attr(data-placeholder);
@@ -367,7 +354,7 @@
   }
 
   /* ============================================================
-     v6 — Pairing-mode visual states for inline figures
+     Pairing-mode visual states for inline figures
      ============================================================ */
 
   /* Pairing-mode source figure — currently waiting for a partner */
