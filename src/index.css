@@ -2,7 +2,7 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-/* Custom font face for Avenir Next - fallback to system fonts if not available */
+
 @layer base {
   .font-avenir {
     font-family: 'Avenir Next', 'Avenir', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -29,7 +29,6 @@
   .dedication-tracking { letter-spacing: 0.15em; }
   .quote-tracking { letter-spacing: 0.01em; }
 
-  /* Markdown content styling */
   .markdown-body { color: #374151; }
 
   .markdown-body p {
@@ -119,10 +118,6 @@
     margin-bottom: 20px;
   }
 
-  /* ============================================================
-     Inline content from migrated WordPress posts
-     ============================================================ */
-
   .markdown-body figure { margin: 1.5rem 0; }
 
   .markdown-body figure img {
@@ -144,7 +139,6 @@
     line-height: 1.5;
   }
 
-  /* WordPress two-column rows */
   .markdown-body .wp-block-columns {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -163,7 +157,6 @@
     }
   }
 
-  /* Image alignment variants */
   .markdown-body figure.alignleft {
     float: left;
     margin: 0.5rem 1.5rem 1rem 0;
@@ -193,10 +186,6 @@
     }
   }
 
-  /* ============================================================
-     Side-by-side figure layout (.figure-grid-2)
-     Used by both the editor (TipTap NodeView) AND the reader.
-     ============================================================ */
   .markdown-body figure.figure-grid-2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -208,7 +197,6 @@
     margin: 0;
   }
 
-  /* Shared caption spans both columns */
   .markdown-body figure.figure-grid-2 > figcaption {
     grid-column: 1 / -1;
     margin-top: 0.5rem;
@@ -219,10 +207,6 @@
       grid-template-columns: 1fr;
     }
   }
-
-  /* ============================================================
-     TipTap editor styles
-     ============================================================ */
 
   .rich-text-editor .ProseMirror p.is-editor-empty:first-child::before {
     content: attr(data-placeholder);
@@ -246,72 +230,32 @@
     text-underline-offset: 2px;
   }
 
-  .rich-text-editor .ProseMirror img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 0.5rem;
-    margin: 1rem 0;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  }
-
   .rich-text-editor .ProseMirror img.ProseMirror-selectednode {
     outline: 3px solid rgb(245 158 11);
     outline-offset: 2px;
   }
 
-  /* Sanitized video embed */
   .markdown-body figure.video-embed { margin: 1.5rem 0; }
   .markdown-body figure.video-embed iframe {
     border-radius: 0.5rem;
     width: 100%;
   }
 
-  /* ============================================================
-     Figure NodeView styles (the editor side of <figure>)
-     ============================================================ */
-
-  /* The NodeView wrapper IS the <figure>. Match reader styles. */
   .rich-text-editor .ProseMirror figure.figure-node {
     margin: 1.5rem 0;
     position: relative;
   }
 
-  /* Images rendered by ProseMirror from the schema, inside the editor figure */
-  .rich-text-editor .ProseMirror figure.figure-node > img {
+  .rich-text-editor .ProseMirror figure.figure-node .figure-image {
     border-radius: 0.5rem;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     width: 100%;
     height: auto;
     object-fit: contain;
+    display: block;
     margin: 0;
   }
 
-  /* Editor-side side-by-side layout — mirrors the reader's .figure-grid-2 rule */
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    align-items: start;
-  }
-
-  /* Caption wrapper (and bare figcaption) span both columns */
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-caption-wrapper,
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > figcaption {
-    grid-column: 1 / -1;
-  }
-
-  /* Toolbar and pairing banners need to stay positioned across the whole figure */
-  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-toolbar {
-    grid-column: 1 / -1;
-  }
-
-  @media (max-width: 640px) {
-    .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* The editable caption inside the editor */
   .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption {
     font-size: 0.875rem;
     color: rgb(100 116 139);
@@ -329,7 +273,6 @@
     transition: background-color 0.15s;
   }
 
-  /* Subtle hover hint to communicate the caption is editable */
   .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption:hover {
     background-color: rgba(251, 191, 36, 0.08);
   }
@@ -337,35 +280,19 @@
     background-color: rgba(251, 191, 36, 0.12);
   }
 
-  /* Placeholder text for empty caption (fallback — the React component
-     also renders an explicit placeholder div when textContent is empty) */
-  .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption.is-empty::before,
-  .rich-text-editor .ProseMirror figure.figure-node figcaption.figure-caption:empty::before {
-    content: attr(data-placeholder);
-    color: #cbd5e1;
-    pointer-events: none;
-  }
-
-  /* Selected figure outline */
   .rich-text-editor .ProseMirror figure.figure-node.figure-selected {
     outline: 3px solid rgb(245 158 11);
     outline-offset: 4px;
     border-radius: 0.5rem;
   }
 
-  /* ============================================================
-     Pairing-mode visual states for inline figures
-     ============================================================ */
-
-  /* Pairing-mode source figure — currently waiting for a partner */
   .rich-text-editor .ProseMirror figure.figure-pairing-source {
-    outline: 3px solid rgb(245 158 11); /* amber-500 */
+    outline: 3px solid rgb(245 158 11);
     outline-offset: 4px;
     border-radius: 0.5rem;
     animation: figure-pulse 1.6s ease-in-out infinite;
   }
 
-  /* Candidate target figures during pairing — subtle highlight on hover */
   .rich-text-editor .ProseMirror figure.figure-pairing-target {
     cursor: pointer;
     transition: outline-color 0.15s;
@@ -382,5 +309,31 @@
     0%, 100% { outline-color: rgb(245 158 11); }
     50%      { outline-color: rgb(252 211 77); }
   }
+}
 
+/* ============================================================
+   Editor figure layout — outside @layer base for higher specificity
+   ============================================================ */
+
+.rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 1rem !important;
+  align-items: start !important;
+}
+
+.rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-toolbar,
+.rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-banner,
+.rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-caption-wrapper {
+  grid-column: 1 / -1 !important;
+}
+
+.rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] > .figure-image-slot {
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] {
+    grid-template-columns: 1fr !important;
+  }
 }
