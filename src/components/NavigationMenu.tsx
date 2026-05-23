@@ -468,7 +468,7 @@ export default function NavigationMenu({
               </h2>
               <p className="text-slate-500 text-sm mb-8 text-center leading-relaxed font-avenir">
                 Enter your 4-digit edit PIN.{' '}
-                
+                <a
                   href="https://app.lastinglegacyonline.com"
                   target="_blank"
                   rel="noopener noreferrer"
