@@ -369,6 +369,15 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     setCurrentState('chapter-title');
   };
 
+  const handleNavigateToPage = (chapterIndex: number, pageIndex: number) => {
+    setCurrentChapterIndex(chapterIndex);
+    setCurrentPageIndex(pageIndex);
+    setCurrentState('chapter-content');
+    // The existing useEffect on `chapter-content` will fetch pages for
+    // the new chapter. We pre-seed the page index so when pages arrive
+    // we land on the right one, not page 0.
+  };
+
   const handleNavigateToGallery = () => setCurrentState('gallery');
   const handleNavigateToGuestbook = () => setCurrentState('guestbook');
 
@@ -391,8 +400,10 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         book={book}
         chapters={chapters}
         currentChapterIndex={currentChapterIndex}
+        currentPageIndex={currentPageIndex}
         currentState={currentState}
         onNavigateToChapter={handleNavigateToChapter}
+        onNavigateToPage={handleNavigateToPage}
         onNavigateToGallery={handleNavigateToGallery}
         onNavigateToGuestbook={handleNavigateToGuestbook}
       />
