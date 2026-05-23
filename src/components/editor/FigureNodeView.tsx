@@ -15,23 +15,16 @@ interface FigureImage {
 }
 
 /**
- * v8 — rewritten to match the actual schema in FigureExtension.ts.
+ * v8 — images are rendered by ProseMirror from the schema's renderHTML,
+ * NOT by React. The previous version tried to paint images in React
+ * which conflicted with ProseMirror's own rendering of the schema
+ * content, resulting in images ending up inside the figcaption.
  *
- * Previous versions read child node types `figureImage` / `figureCaption`,
- * which were never registered. As a result the NodeView rendered an empty
- * figure shell while ProseMirror painted the underlying serialized DOM
- * (<img>s + <figcaption>) beneath it, causing the side-by-side caption
- * misalignment seen in production.
- *
- * Current schema:
- *   - images: in node.attrs.images (array of { src, alt })
- *   - caption: inline text content of the node itself
- *
- * So this NodeView:
- *   - reads images from attrs
- *   - uses <NodeViewContent as="figcaption"> for the editable caption
- *   - mutates images via tr.setNodeMarkup (attribute updates)
- *   - lets ProseMirror handle caption text natively (no manual textarea)
+ * Current architecture:
+ *   - Schema renderHTML produces: <figure> <img> <img> <figcaption /> </figure>
+ *   - The NodeView wraps that and adds: toolbar, hover overlays, caption placeholder
+ *   - CSS uses `display: grid` on the figure itself for side-by-side layout
+ *   - The figcaption uses NodeViewContent so the caption text remains editable
  */
 export default function FigureNodeView({
   node, deleteNode, editor, getPos,
@@ -184,7 +177,6 @@ export default function FigureNodeView({
       ? [sourcePos, sourceNode.nodeSize, targetPos, targetNode.nodeSize]
       : [targetPos, targetNode.nodeSize, sourcePos, sourceNode.nodeSize];
 
-    // Delete the later one first so positions stay valid for the earlier replacement
     tr.delete(secondPos, secondPos + secondSize);
     tr.replaceWith(firstPos, firstPos + firstSize, mergedFigure);
 
@@ -201,6 +193,7 @@ export default function FigureNodeView({
       data-pairing-source={iAmPairingSource ? 'true' : 'false'}
       data-pairing-target-candidate={someoneElseIsPairing && layout === 'single' ? 'true' : 'false'}
       className={`figure-node relative my-6
+        ${layout === 'side-by-side' ? 'figure-grid-2' : ''}
         ${iAmPairingSource ? 'figure-pairing-source' : ''}
         ${someoneElseIsPairing && layout === 'single' ? 'figure-pairing-target cursor-pointer' : ''}`}
       onMouseEnter={() => setHovered(true)}
@@ -213,7 +206,7 @@ export default function FigureNodeView({
         }
       }}
     >
-      {/* Source banner */}
+      {/* Pairing source banner */}
       {iAmPairingSource && (
         <div
           contentEditable={false}
@@ -250,7 +243,7 @@ export default function FigureNodeView({
       {showControls && (
         <div
           contentEditable={false}
-          className="absolute top-2 left-1/2 -translate-x-1/2 z-10
+          className="figure-toolbar absolute top-2 left-1/2 -translate-x-1/2 z-10
             flex items-center gap-1 px-2 py-1 bg-slate-900/85 backdrop-blur-sm
             rounded-full shadow-lg"
         >
@@ -294,57 +287,24 @@ export default function FigureNodeView({
         </div>
       )}
 
-      {/* Images — block of its own, above the caption */}
-      <div
-        contentEditable={false}
-        className={`figure-images ${layout === 'side-by-side' ? 'grid grid-cols-2 gap-3' : ''}`}
-      >
-        {images.map((img, idx) => (
+      {/* Caption — editable inline ProseMirror content with a sibling
+          placeholder shown when empty. ProseMirror also renders the
+          schema's <img> children directly into the figure here; the
+          NodeViewContent below anchors the caption to its own slot. */}
+      <div className="figure-caption-wrapper relative">
+        {node.textContent.trim() === '' && (
           <div
-            key={`${idx}-${img.src}`}
-            className="relative"
-            onMouseEnter={() => setHoveredImageIndex(idx)}
-            onMouseLeave={() => setHoveredImageIndex(null)}
+            contentEditable={false}
+            className="absolute inset-x-0 top-1 text-center text-sm font-lora italic text-slate-300 pointer-events-none"
           >
-            <img src={img.src} alt={img.alt ?? ''} className="w-full rounded-lg" />
-            {hoveredImageIndex === idx && !pairing.sourcePos && (
-              <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/30 transition-colors">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleReplaceClick(idx); }}
-                  disabled={uploading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-800
-                    rounded-full text-xs font-avenir hover:bg-slate-100 shadow-lg disabled:opacity-50"
-                >
-                  {uploading && replacingIndex === idx ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={12} />
-                  )}
-                  Replace
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); removeImageAt(idx); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-red-700
-                    rounded-full text-xs font-avenir hover:bg-red-50 shadow-lg"
-                >
-                  <X size={12} />
-                  Remove
-                </button>
-              </div>
-            )}
+            Add a caption…
           </div>
-        ))}
+        )}
+        <NodeViewContent
+          as="figcaption"
+          className="figure-caption"
+        />
       </div>
-
-      {/* Caption — editable inline ProseMirror content, sibling of images
-          (NOT a flex child). Renders as a block <figcaption> below the
-          images regardless of layout. */}
-      <NodeViewContent
-        as="figcaption"
-        className="figure-caption block w-full mt-3 px-2 text-sm font-lora italic text-slate-600 text-center"
-      />
 
       <input
         ref={fileInputRef}
