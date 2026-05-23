@@ -267,6 +267,26 @@
     width: 100%;
   }
 
+  /* Editor-side: when a figure-node has side-by-side layout, lay images
+     out in a grid. The reader uses the `.figure-grid-2` class on the
+     figure itself; the editor uses a wrapping `.figure-images` div, so
+     we need a separate rule here. */
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+  }
+
+  .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images > div {
+    min-width: 0; /* prevents grid blowout from long alt text or wide images */
+  }
+
+  @media (max-width: 640px) {
+    .rich-text-editor .ProseMirror figure.figure-node[data-layout="side-by-side"] .figure-images {
+      grid-template-columns: 1fr;
+    }
+  }
 
 
   /* Caption textarea (v7.2 — replaces the input for multi-line captions) */
