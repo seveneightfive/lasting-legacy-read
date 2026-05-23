@@ -435,7 +435,7 @@ export default function NavigationMenu({
                   </button>
                 )}
 
-                
+                <a
                   href="https://lastinglegacyonline.com"
                   target="_blank"
                   rel="noopener noreferrer"
