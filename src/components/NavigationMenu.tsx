@@ -44,16 +44,32 @@ export default function NavigationMenu({
   const [pinLoading, setPinLoading] = useState(false);
 
   // ── TOC expansion + page cache ───────────────────────────────
-  // Which chapters have their page list expanded
   const [expandedChapters, setExpandedChapters] = useState<Record<number, boolean>>({});
-  // Cache pages per chapter so we don't re-fetch on every expand
   const [pagesByChapter, setPagesByChapter] = useState<Record<number, Page[]>>({});
   const [loadingPagesFor, setLoadingPagesFor] = useState<Set<number>>(new Set());
 
   const logoUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/site-images/LLO-SiteLogo.png`;
 
-  // Auto-expand the currently-active chapter when the menu opens, so the
-  // reader's current location is visible without manual digging.
+  // Resolve a display label for a page from any of the possible title
+  // columns. Editor uses `subtitle` as the "Section Heading" field.
+  const getPageLabel = (page: Page, fallbackIndex: number): string => {
+    const p = page as Page & {
+      subtitle?: string | null;
+      title?: string | null;
+      section_heading?: string | null;
+      heading?: string | null;
+      name?: string | null;
+    };
+    return (
+      (p.subtitle && p.subtitle.trim()) ||
+      (p.section_heading && p.section_heading.trim()) ||
+      (p.title && p.title.trim()) ||
+      (p.heading && p.heading.trim()) ||
+      (p.name && p.name.trim()) ||
+      `Page ${fallbackIndex + 1}`
+    );
+  };
+
   useEffect(() => {
     if (isOpen && currentState.includes('chapter') && chapters[currentChapterIndex]) {
       const activeId = chapters[currentChapterIndex].id;
@@ -77,7 +93,6 @@ export default function NavigationMenu({
       setPagesByChapter(prev => ({ ...prev, [chapterId]: data || [] }));
     } catch (error) {
       console.error('Error loading pages for chapter:', error);
-      // Cache an empty array so we don't retry forever on errors
       setPagesByChapter(prev => ({ ...prev, [chapterId]: [] }));
     } finally {
       setLoadingPagesFor(prev => {
@@ -112,7 +127,6 @@ export default function NavigationMenu({
     if (onNavigateToPage) {
       onNavigateToPage(chapterIndex, pageIndex);
     } else {
-      // Fallback if parent hasn't wired up page nav yet
       onNavigateToChapter(chapterIndex);
     }
     setIsOpen(false);
@@ -146,7 +160,6 @@ export default function NavigationMenu({
     }
   };
 
-  // ── PIN verification ─────────────────────────────────────────
   const openPinModal = () => {
     setPin('');
     setPinError('');
@@ -206,7 +219,6 @@ export default function NavigationMenu({
 
   return (
     <>
-      {/* ── Hamburger button ── */}
       <button
         onClick={() => setIsOpen(true)}
         className="fixed top-6 right-6 z-40 p-3 bg-white rounded-full shadow-lg hover:bg-slate-50 transition-colors"
@@ -215,7 +227,6 @@ export default function NavigationMenu({
         <Menu className="w-6 h-6 text-slate-800" />
       </button>
 
-      {/* ── Nav drawer ── */}
       <AnimatePresence>
         {isOpen && (
           <>
@@ -278,7 +289,6 @@ export default function NavigationMenu({
 
                     return (
                       <div key={chapter.id}>
-                        {/* Chapter row: expand toggle + navigate */}
                         <div
                           className={`flex items-stretch rounded-lg overflow-hidden transition-colors ${
                             active ? 'bg-slate-800 text-white' : 'hover:bg-slate-100 text-slate-700'
@@ -312,7 +322,6 @@ export default function NavigationMenu({
                           </button>
                         </div>
 
-                        {/* Expanded page list */}
                         <AnimatePresence initial={false}>
                           {isExpanded && (
                             <motion.div
@@ -351,7 +360,7 @@ export default function NavigationMenu({
                                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
                                       }`}
                                     >
-                                      {page.title || `Page ${pageIndex + 1}`}
+                                      {getPageLabel(page, pageIndex)}
                                     </button>
                                   );
                                 })}
@@ -391,7 +400,6 @@ export default function NavigationMenu({
               </div>
 
               <div className="p-6 border-t border-slate-200 space-y-3">
-                {/* ── Edit Story button ── */}
                 <button
                   onClick={openPinModal}
                   className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-white border-2 border-slate-800 text-slate-800 rounded-lg hover:bg-slate-50 transition-colors font-avenir font-medium"
@@ -446,7 +454,6 @@ export default function NavigationMenu({
         )}
       </AnimatePresence>
 
-      {/* ── PIN Modal ── */}
       <AnimatePresence>
         {showPinModal && (
           <motion.div
@@ -468,14 +475,7 @@ export default function NavigationMenu({
               </h2>
               <p className="text-slate-500 text-sm mb-8 text-center leading-relaxed font-avenir">
                 Enter your 4-digit edit PIN.{' '}
-                <a
-                  href="https://app.lastinglegacyonline.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-700 underline"
-                >
-                  Find it in the app
-                </a>{' '}
+                <a href="https://app.lastinglegacyonline.com" target="_blank" rel="noopener noreferrer" className="text-slate-700 underline">Find it in the app</a>{' '}
                 under your book settings.
               </p>
 
