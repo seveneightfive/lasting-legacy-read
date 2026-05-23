@@ -5,7 +5,6 @@ import { supabase, Book, Chapter, Page } from '../lib/supabase';
 import { fetchCompleteBookData } from '../utils/bookDataFetcher';
 import { generateBookPDF } from '../utils/pdfBookGenerator';
 
-const EDITOR_URL = 'https://edit.lastinglegacyonline.com';
 const EDGE_FN    = 'https://uhzncrsbytxwdlmldwqf.supabase.co/functions/v1/story-editor';
 
 interface NavigationMenuProps {
@@ -190,10 +189,8 @@ export default function NavigationMenu({
       if (data.success) {
         setShowPinModal(false);
         setPin('');
-        window.open(
-          `${EDITOR_URL}?slug=${encodeURIComponent(book.slug)}&pin=${encodeURIComponent(pin)}`,
-          '_blank'
-        );
+        const editUrl = `/book/${encodeURIComponent(book.slug)}/edit?pin=${encodeURIComponent(pin)}`;
+        window.location.href = editUrl;
       } else {
         setPinError('Incorrect PIN. Find your PIN in the app under your book settings.');
       }
