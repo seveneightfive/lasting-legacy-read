@@ -7,7 +7,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export interface Book {
   id: number; title: string; author: string; slug: string;
-  image_url?: string; dedication?: string; intro?: string;
+  image_url?: string; dedication?: string; intro?: string; intro_image_url?: string | null; intro_image_caption?: string | null;
   created_at?: string; date_published?: string; view_count?: number;
   filloutform_link?: string; user?: string;
   edit_pin?: string;
