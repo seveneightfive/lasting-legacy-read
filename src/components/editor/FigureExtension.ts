@@ -3,42 +3,57 @@ import { ReactNodeViewRenderer } from '@tiptap/react';
 import FigureNodeView from './FigureNodeView';
 
 /**
- * Figure node — wraps 1+ images and a caption.
+ * Figure node — handles 1 or 2 images with a shared, inline-editable caption.
  *
- * SCHEMA
- * ------
- *   figure {
- *     attrs: { layout: 'single' | 'side-by-side' }
- *     content: figure_image+ figure_caption?
- *   }
- *   figure_image (atom, leaf) {
- *     attrs: { src: string, alt: string|null }
- *   }
- *   figure_caption {
- *     content: inline*       ← editable text
- *   }
+ * IMPORTANT ARCHITECTURE NOTE
+ * ---------------------------
+ * The schema's `content` is `inline*` — meaning the only ProseMirror content
+ * is the caption text. Images are stored in the `images` attribute (array of
+ * { src, alt }), NOT as ProseMirror child nodes.
  *
- * Why this architecture (different from v4):
- *   ProseMirror cannot serialize JavaScript arrays as node attributes. Earlier
- *   versions tried to store `images: [{src,alt}, ...]` as a single attribute,
- *   which silently broke ProseMirror's schema validation — the insertContent
- *   command succeeded API-wise but the node was never added to the document.
+ * This means:
+ *   - In the editor, the React NodeView paints the images from attributes.
+ *   - In serialized HTML (what gets saved to the DB and read by the reader),
+ *     renderHTML re-creates <img> tags from the attribute so the reader's
+ *     dangerouslySetInnerHTML produces correct DOM.
+ *   - parseHTML reads images back into the attribute when loading from saved
+ *     HTML.
  *
- *   The fix: each image is its OWN child node, with string attributes (which
- *   ProseMirror handles fine). Layout is a simple string on the figure itself.
+ * Why not make images ProseMirror child nodes?
+ *   ProseMirror would then need a place to render them in the live editor
+ *   DOM via NodeViewContent. But NodeViewContent captures ALL content,
+ *   including the caption — and ProseMirror would mix imgs and text in the
+ *   same anchor, causing the imgs to end up inside the figcaption. Keeping
+ *   imgs as attributes lets the NodeView render them independently in
+ *   exactly the right spot in the visual layout.
  *
- *   The serialized HTML still looks like a normal <figure> with <img>s and a
- *   <figcaption> — so the reader continues to render it via the existing CSS.
+ * Layouts:
+ *   - 'single'       → one image stacked above caption
+ *   - 'side-by-side' → two images in a row, shared caption below
+ *
+ * Serialized HTML shape (what gets saved + what reader renders):
+ *   Single:
+ *     <figure data-layout="single">
+ *       <img src="..." alt="..." />
+ *       <figcaption>...</figcaption>
+ *     </figure>
+ *   Side-by-side:
+ *     <figure data-layout="side-by-side" class="figure-grid-2">
+ *       <img src="..." alt="..." />
+ *       <img src="..." alt="..." />
+ *       <figcaption>...</figcaption>
+ *     </figure>
  */
-
 export interface FigureOptions {
+  /** Book slug used as the storage folder for image uploads (for "Replace") */
   bookSlug: string;
 }
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     figure: {
-      insertFigure: (params: {
+      /** Insert a figure with the given images and (optional) caption */
+      insertFigure: (attrs: {
         layout: 'single' | 'side-by-side';
         images: Array<{ src: string; alt?: string | null }>;
         caption?: string;
@@ -47,61 +62,6 @@ declare module '@tiptap/core' {
   }
 }
 
-// ─── figure_image (atom, no children) ────────────────────────────
-export const FigureImage = Node.create({
-  name: 'figureImage',
-  group: 'figureContent',
-  atom: true,
-  selectable: false,
-  draggable: false,
-
-  addAttributes() {
-    return {
-      src: { default: '' },
-      alt: { default: null },
-    };
-  },
-
-  parseHTML() {
-    return [
-      // Match <img> tags that live inside a <figure>
-      {
-        tag: 'figure img',
-        priority: 70,
-        getAttrs: (node) => {
-          if (!(node instanceof HTMLElement)) return false;
-          return {
-            src: node.getAttribute('src') ?? '',
-            alt: node.getAttribute('alt') ?? null,
-          };
-        },
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['img', mergeAttributes(HTMLAttributes)];
-  },
-});
-
-// ─── figure_caption (inline content) ─────────────────────────────
-export const FigureCaption = Node.create({
-  name: 'figureCaption',
-  group: 'figureContent',
-  content: 'inline*',
-  defining: true,
-  isolating: false,
-
-  parseHTML() {
-    return [{ tag: 'figcaption', priority: 70 }];
-  },
-
-  renderHTML() {
-    return ['figcaption', { class: 'figure-caption' }, 0];
-  },
-});
-
-// ─── figure (the wrapper) ────────────────────────────────────────
 export const Figure = Node.create<FigureOptions>({
   name: 'figure',
 
@@ -110,9 +70,7 @@ export const Figure = Node.create<FigureOptions>({
   },
 
   group: 'block',
-  // 1+ images followed by an optional caption.
-  // Both children are in the `figureContent` group defined above.
-  content: 'figureImage+ figureCaption?',
+  content: 'inline*',           // ONLY the caption text lives in PM content
   defining: true,
   isolating: true,
 
@@ -122,6 +80,19 @@ export const Figure = Node.create<FigureOptions>({
         default: 'single',
         parseHTML: (el) => el.getAttribute('data-layout') ?? 'single',
         renderHTML: (attrs) => ({ 'data-layout': attrs.layout }),
+      },
+      images: {
+        default: [] as Array<{ src: string; alt?: string | null }>,
+        parseHTML: (el) => {
+          const imgs = Array.from(el.querySelectorAll(':scope > img'));
+          return imgs.map((img) => ({
+            src: img.getAttribute('src') ?? '',
+            alt: img.getAttribute('alt') ?? null,
+          }));
+        },
+        // Don't write images as attribute on the figure element itself —
+        // they're rendered as <img> children in renderHTML below.
+        renderHTML: () => ({}),
       },
     };
   },
@@ -133,57 +104,67 @@ export const Figure = Node.create<FigureOptions>({
         priority: 60,
         getAttrs: (node) => {
           if (!(node instanceof HTMLElement)) return false;
-          // Don't claim figures that are video embeds (we sanitize those separately)
-          if (node.classList.contains('video-embed')) return false;
           if (!node.querySelector('img')) return false;
-          return null; // null = match (attrs come from addAttributes parseHTML)
+          return {};
+        },
+        // Caption text lives in <figcaption>; ignore <img> children so PM
+        // doesn't try to absorb them into the inline* content.
+        contentElement: (node) => {
+          if (!(node instanceof HTMLElement)) return node;
+          return node.querySelector('figcaption') ?? node;
         },
       },
     ];
   },
 
   renderHTML({ HTMLAttributes, node }) {
-    const layout = (node.attrs.layout ?? 'single') as string;
-    const cls = layout === 'side-by-side' ? 'figure-grid-2' : undefined;
+    const layout = (HTMLAttributes as Record<string, string>)['data-layout'] ?? 'single';
+    const images: Array<{ src: string; alt?: string | null }> =
+      (node.attrs.images as Array<{ src: string; alt?: string | null }>) ?? [];
+
+    const figureAttrs = mergeAttributes(HTMLAttributes, {
+      class: layout === 'side-by-side' ? 'figure-grid-2' : undefined,
+    });
+
+    const imgChildren = images.map((img) => {
+      const attrs: Record<string, string> = { src: img.src ?? '' };
+      if (img.alt) attrs.alt = img.alt;
+      return ['img', attrs] as [string, Record<string, string>];
+    });
+
     return [
       'figure',
-      mergeAttributes(HTMLAttributes, cls ? { class: cls } : {}),
-      0, // ProseMirror sentinel: render children here
+      figureAttrs,
+      ...imgChildren,
+      ['figcaption', {}, 0],
     ];
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(FigureNodeView);
+    return ReactNodeViewRenderer(FigureNodeView, {
+      // Tell ProseMirror that the contentDOM (where inline* content goes)
+      // is the figcaption. Without this, ProseMirror tries to render the
+      // images into the NodeViewContent slot too, ending up inside the
+      // caption.
+      contentDOMElementTag: 'figcaption',
+    });
   },
 
   addCommands() {
     return {
       insertFigure:
-        (params) =>
+        (attrs) =>
         ({ chain }) => {
-          // Build child node specs as plain JSON. Each image becomes a
-          // figureImage atom; the caption (if any) becomes a figureCaption.
-          const imageNodes = params.images.map((img) => ({
-            type: 'figureImage',
-            attrs: { src: img.src, alt: img.alt ?? null },
-          }));
-
-          const captionNodes = params.caption?.trim()
-            ? [{
-                type: 'figureCaption',
-                content: [{ type: 'text', text: params.caption.trim() }],
-              }]
-            : [{
-                // Always include an empty caption so users can click to add one
-                type: 'figureCaption',
-                content: [],
-              }];
-
           return chain()
             .insertContent({
               type: this.name,
-              attrs: { layout: params.layout },
-              content: [...imageNodes, ...captionNodes],
+              attrs: {
+                layout: attrs.layout,
+                images: attrs.images,
+              },
+              content: attrs.caption
+                ? [{ type: 'text', text: attrs.caption }]
+                : [],
             })
             .insertContent({ type: 'paragraph' })
             .run();
