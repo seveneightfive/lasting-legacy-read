@@ -24,6 +24,7 @@ export interface Page {
   quote?: string; quote_attribute?: string; image_caption?: string;
   subtitle?: string; created_at?: string; sort_order?: number;
   final_order?: number; user?: string; row_id?: string;
+  is_deleted?: boolean;  // ← add this
 }
 export interface GalleryItem {
   id: number; image_title?: string; image_url: string;
