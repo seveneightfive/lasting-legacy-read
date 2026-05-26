@@ -13,6 +13,7 @@ import ThankYouPage from './ThankYouPage';
 import McFarlandPopup1 from './McFarlandPopup1';
 import McFarlandPopup2 from './McFarlandPopup2';
 import { useMcFarlandPopups } from '../hooks/useMcFarlandPopups';
+import { sortPagesForDisplay } from '../utils/pageOrder';
 
 interface BookReaderProps {
   book: Book;
@@ -103,7 +104,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     }
   }, [currentState, book.user]);
 
-  const fetchPages = async (chapterId: number) => {
+  cconst fetchPages = async (chapterId: number) => {
     setLoading(true);
     try {
       const [pagesResult, galleryResult] = await Promise.all([
@@ -111,7 +112,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
           .from('pages')
           .select('*')
           .eq('chapter_id', chapterId)
-          .order('sort_order', { ascending: true }),
+          .or('is_deleted.is.null,is_deleted.eq.false'),
         supabase
           .from('gallery')
           .select('*')
@@ -119,11 +120,8 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
           .order('sort_order', { ascending: true }),
       ]);
       if (pagesResult.error) throw pagesResult.error;
-      setPages(pagesResult.data || []);
+      setPages(sortPagesForDisplay(pagesResult.data || []));
       setChapterGalleryItems(galleryResult.data || []);
-      // Note: currentPageIndex is NOT reset here — callers (handleNavigateToChapter,
-      // handleNavigateToPage, forward-nav in handleNext) explicitly control which
-      // page to land on. Resetting here would stomp on deep-links from the TOC.
     } catch (error) {
       console.error('Error fetching pages:', error);
     } finally {
