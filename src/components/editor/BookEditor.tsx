@@ -236,6 +236,174 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     await loadGallery(pageId);
   }, [galleryByPage, loadGallery]);
 
+  // ── Soft-delete a page ─────────────────────────────────────────
+  // We do NOT hard-delete because Whalesync uses Supabase rows to know
+  // which Glide questions have been answered. A hard delete would let
+  // Whalesync re-create the page on its next sync. Instead we mark
+  // is_deleted=true and filter on read. Whalesync should be configured
+  // to leave rows where is_deleted=true alone.
+  const handleDeletePage = useCallback(async (pageId: number, chapterId: number) => {
+    const pagesInChapter = pagesByChapter.get(chapterId) ?? [];
+    const pageToDelete = pagesInChapter.find((p) => p.id === pageId);
+    if (!pageToDelete) return;
+
+    const label = pageToDelete.subtitle?.trim() || `Page ${effectiveOrder(pageToDelete) + 1}`;
+    const ok = window.confirm(
+      `Delete "${label}"?\n\nThe page will be hidden from your story. Photos linked to it will also be hidden. ` +
+      `This can be undone by your administrator if needed.`
+    );
+    if (!ok) return;
+
+    // Flush any pending edits to this page first
+    if (dirty?.kind === 'page' && dirty.pageId === pageId) {
+      setDirty(null);
+    } else {
+      await autosave.flush();
+    }
+
+    // Soft-delete the page
+    const { error: pageErr } = await supabase
+      .from('pages')
+      .update({ is_deleted: true })
+      .eq('id', pageId);
+    if (pageErr) {
+      console.error('Failed to delete page:', pageErr);
+      window.alert('Could not delete this page. Please try again.');
+      return;
+    }
+
+    // Log revision so it's auditable / recoverable
+    void logRevision({
+      page_id: pageId,
+      chapter_id: chapterId,
+      book_id: book.id,
+      field: 'is_deleted',
+      previous_value: 'false',
+      new_value: 'true',
+    });
+
+    // Renumber final_order on remaining active pages.
+    // We rewrite final_order only — sort_order stays untouched (Glide-owned).
+    const remaining = pagesInChapter
+      .filter((p) => p.id !== pageId)
+      .map((p, i) => ({ ...p, final_order: i }));
+
+    await Promise.all(
+      remaining
+        .filter((p) => {
+          const before = pagesInChapter.find((x) => x.id === p.id);
+          return before?.final_order !== p.final_order;
+        })
+        .map((p) =>
+          supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)
+        )
+    );
+
+    // Update local state
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(chapterId, remaining);
+      return next;
+    });
+    setGalleryByPage((prev) => {
+      const next = new Map(prev);
+      next.delete(pageId);
+      return next;
+    });
+
+    // Navigate away if we were viewing the deleted page
+    if (current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      if (chapter?.id === chapterId) {
+        const deletedIndex = pagesInChapter.findIndex((p) => p.id === pageId);
+        if (deletedIndex === current.pageIndex) {
+          if (remaining.length > 0) {
+            const newIndex = Math.min(current.pageIndex, remaining.length - 1);
+            setCurrent({ kind: 'page', chapterIndex: current.chapterIndex, pageIndex: newIndex });
+          } else {
+            setCurrent({ kind: 'chapter-title', chapterIndex: current.chapterIndex });
+          }
+        } else if (deletedIndex < current.pageIndex) {
+          setCurrent({
+            kind: 'page',
+            chapterIndex: current.chapterIndex,
+            pageIndex: current.pageIndex - 1,
+          });
+        }
+      }
+    }
+  }, [pagesByChapter, dirty, autosave, current, chapters, book.id, logRevision]);
+
+  // ── Reorder pages within a chapter ─────────────────────────────
+  // Writes final_order ONLY. sort_order is owned by Glide/Whalesync and
+  // stays untouched so the question-answered state remains intact.
+  const handleReorderPages = useCallback(async (
+    chapterId: number,
+    fromIndex: number,
+    toIndex: number,
+  ) => {
+    if (fromIndex === toIndex) return;
+    const existing = pagesByChapter.get(chapterId) ?? [];
+    if (fromIndex < 0 || fromIndex >= existing.length) return;
+    if (toIndex < 0 || toIndex >= existing.length) return;
+
+    const reordered = [...existing];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    // Reassign final_order sequentially. sort_order is left alone.
+    const renumbered = reordered.map((p, i) => ({ ...p, final_order: i }));
+
+    // Optimistic local update
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(chapterId, renumbered);
+      return next;
+    });
+
+    // Persist only rows whose final_order actually changed
+    const changed = renumbered.filter((p) => {
+      const before = existing.find((x) => x.id === p.id);
+      return before?.final_order !== p.final_order;
+    });
+
+    try {
+      await Promise.all(
+        changed.map((p) =>
+          supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)
+        )
+      );
+      void logRevision({
+        chapter_id: chapterId,
+        book_id: book.id,
+        field: 'final_order',
+        new_value: `reordered ${changed.length} page(s)`,
+      });
+    } catch (err) {
+      console.error('Failed to persist reorder:', err);
+      // Roll back
+      setPagesByChapter((prev) => {
+        const next = new Map(prev);
+        next.set(chapterId, existing);
+        return next;
+      });
+      window.alert('Could not save the new page order. Please try again.');
+      return;
+    }
+
+    // Keep tracking the same page if it moved
+    if (current.kind === 'page') {
+      const chapter = chapters[current.chapterIndex];
+      if (chapter?.id === chapterId) {
+        const oldId = existing[current.pageIndex]?.id;
+        const newIdx = renumbered.findIndex((p) => p.id === oldId);
+        if (newIdx >= 0 && newIdx !== current.pageIndex) {
+          setCurrent({ kind: 'page', chapterIndex: current.chapterIndex, pageIndex: newIdx });
+        }
+      }
+    }
+  }, [pagesByChapter, current, chapters, book.id, logRevision]);
+
   const handleExit = async () => {
     await autosave.flush();
     onExit();
@@ -419,6 +587,8 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         toc={toc}
         currentState={current}
         onNavigate={(s) => setCurrent(s)}
+        onDeletePage={handleDeletePage}
+        onReorderPages={handleReorderPages}
       />
     </div>
   );
