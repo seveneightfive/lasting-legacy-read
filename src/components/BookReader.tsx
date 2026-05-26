@@ -104,7 +104,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     }
   }, [currentState, book.user]);
 
-  cconst fetchPages = async (chapterId: number) => {
+  const fetchPages = async (chapterId: number) => {
     setLoading(true);
     try {
       const [pagesResult, galleryResult] = await Promise.all([
