@@ -11,6 +11,7 @@ import DedicationEditView from './DedicationEditView';
 import IntroEditView from './IntroEditView';
 import ChapterTitleEditView from './ChapterTitleEditView';
 import PageEditView from './PageEditView';
+import { sortPagesForDisplay, effectiveOrder } from '../../utils/pageOrder';
 
 interface BookEditorProps {
   book: Book;
@@ -55,20 +56,25 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
   }, []);
 
   const loadPages = useCallback(async (chapterId: number) => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('pages')
       .select('*')
       .eq('chapter_id', chapterId)
-      .order('sort_order', { ascending: true });
+      .or('is_deleted.is.null,is_deleted.eq.false');  // tolerate legacy NULLs
+    if (error) {
+      console.error('Failed to load pages:', error);
+      return;
+    }
     if (data) {
+      const sorted = sortPagesForDisplay(data);
       setPagesByChapter((prev) => {
         const next = new Map(prev);
-        next.set(chapterId, data);
+        next.set(chapterId, sorted);
         return next;
       });
     }
   }, []);
-
+  
   const loadGallery = useCallback(async (pageId: number) => {
     const { data } = await supabase
       .from('gallery')
