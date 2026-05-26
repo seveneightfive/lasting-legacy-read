@@ -1,6 +1,23 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, BookOpen, Heart, FileText, ChevronRight, FileEdit } from 'lucide-react';
+import { X, BookOpen, Heart, FileText, ChevronRight, FileEdit, GripVertical, Trash2 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { TocNode, EditorState, stateKey } from '../../utils/editorState';
 
 interface TableOfContentsProps {
@@ -9,20 +26,22 @@ interface TableOfContentsProps {
   toc: TocNode[];
   currentState: EditorState;
   onNavigate: (state: EditorState) => void;
+  onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
+  onReorderPages: (chapterId: number, fromIndex: number, toIndex: number) => void | Promise<void>;
 }
 
 /**
  * Slide-out left drawer showing the full editable structure of the book.
- * Click any node to jump there. The current node is highlighted.
+ * Page rows support drag-to-reorder (within their chapter) and per-row delete.
  */
 export default function TableOfContents({
   open, onClose, toc, currentState, onNavigate,
+  onDeletePage, onReorderPages,
 }: TableOfContentsProps) {
   const currentKey = stateKey(currentState);
 
   const handleNav = (state: EditorState) => {
     onNavigate(state);
-    // On mobile auto-close; on desktop leave open (the parent controls open state)
     if (window.innerWidth < 768) onClose();
   };
 
@@ -30,7 +49,6 @@ export default function TableOfContents({
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -40,7 +58,6 @@ export default function TableOfContents({
             className="fixed inset-0 bg-slate-900/30 z-30"
           />
 
-          {/* Drawer */}
           <motion.aside
             initial={{ x: -320 }}
             animate={{ x: 0 }}
@@ -48,7 +65,6 @@ export default function TableOfContents({
             transition={{ type: 'tween', duration: 0.25 }}
             className="fixed top-0 left-0 bottom-0 w-[300px] bg-white shadow-2xl z-40 flex flex-col"
           >
-            {/* Header */}
             <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
               <h2 className="font-avenir text-slate-800 text-sm uppercase tracking-wider">
                 Table of Contents
@@ -62,15 +78,13 @@ export default function TableOfContents({
               </button>
             </div>
 
-            {/* Tree */}
             <nav className="flex-1 overflow-y-auto p-3">
               {toc.map((node, i) => {
                 if (node.kind === 'book-section') {
                   const isActive = stateKey(node.state) === currentKey;
-                  const icon = node.label === 'Cover' ? BookOpen
+                  const Icon = node.label === 'Cover' ? BookOpen
                             : node.label === 'Dedication' ? Heart
                             : FileText;
-                  const Icon = icon;
                   return (
                     <button
                       key={`sec-${i}`}
@@ -88,7 +102,6 @@ export default function TableOfContents({
                   );
                 }
 
-                // Chapter node
                 const chapterActive = stateKey(node.state) === currentKey;
                 return (
                   <div key={`ch-${node.chapter.id}`} className="mt-3">
@@ -108,43 +121,149 @@ export default function TableOfContents({
                     </button>
 
                     {node.pages.length > 0 && (
-                      <ul className="mt-1 ml-3 border-l border-slate-200">
-                        {node.pages.map((p) => {
-                          const pageActive = stateKey(p.state) === currentKey;
-                          return (
-                            <li key={p.page.id}>
-                              <button
-                                onClick={() => handleNav(p.state)}
-                                className={`w-full flex items-center gap-2 pl-3 pr-2 py-1.5 text-left
-                                  text-xs font-lora transition-colors rounded-r-lg
-                                  ${pageActive
-                                    ? 'bg-amber-50 text-amber-900 border-l-2 -ml-px border-amber-500'
-                                    : 'text-slate-600 hover:bg-slate-50'
-                                  }`}
-                              >
-                                <FileEdit size={11} className="text-slate-400 shrink-0" />
-                                <span className="truncate flex-1">{p.label}</span>
-                                {pageActive && <ChevronRight size={11} />}
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                      <SortablePageList
+                        chapterId={node.chapter.id}
+                        pages={node.pages}
+                        currentKey={currentKey}
+                        onNavigate={handleNav}
+                        onDeletePage={onDeletePage}
+                        onReorderPages={onReorderPages}
+                      />
                     )}
                   </div>
                 );
               })}
             </nav>
 
-            {/* Footer hint */}
             <div className="px-5 py-3 border-t border-slate-200">
               <p className="text-xs text-slate-400 font-avenir">
-                Click any item to jump there. Changes save automatically.
+                Drag <GripVertical size={11} className="inline -mt-0.5" /> to reorder. Click <Trash2 size={11} className="inline -mt-0.5" /> to delete.
               </p>
             </div>
           </motion.aside>
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+// ── Sortable page list (one per chapter) ──────────────────────────
+interface SortablePageListProps {
+  chapterId: number;
+  pages: TocNode extends { kind: 'chapter' } ? TocNode['pages'] : never;
+  currentKey: string;
+  onNavigate: (state: EditorState) => void;
+  onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
+  onReorderPages: (chapterId: number, fromIndex: number, toIndex: number) => void | Promise<void>;
+}
+
+function SortablePageList({
+  chapterId, pages, currentKey, onNavigate, onDeletePage, onReorderPages,
+}: SortablePageListProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const ids = pages.map((p) => p.page.id);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(Number(active.id));
+    const newIndex = ids.indexOf(Number(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    void onReorderPages(chapterId, oldIndex, newIndex);
+  };
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <ul className="mt-1 ml-3 border-l border-slate-200">
+          {pages.map((p) => (
+            <SortablePageRow
+              key={p.page.id}
+              page={p}
+              chapterId={chapterId}
+              isActive={stateKey(p.state) === currentKey}
+              onNavigate={onNavigate}
+              onDeletePage={onDeletePage}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+// ── A single draggable + deletable page row ───────────────────────
+interface SortablePageRowProps {
+  page: SortablePageListProps['pages'][number];
+  chapterId: number;
+  isActive: boolean;
+  onNavigate: (state: EditorState) => void;
+  onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
+}
+
+function SortablePageRow({
+  page, chapterId, isActive, onNavigate, onDeletePage,
+}: SortablePageRowProps) {
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+  } = useSortable({ id: page.page.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`group flex items-center pr-1 rounded-r-lg
+        ${isActive ? 'bg-amber-50' : 'hover:bg-slate-50'}`}
+    >
+      {/* Drag handle */}
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="p-1 text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing touch-none"
+        aria-label="Drag to reorder"
+      >
+        <GripVertical size={12} />
+      </button>
+
+      {/* Click-to-navigate label */}
+      <button
+        onClick={() => onNavigate(page.state)}
+        className={`flex-1 flex items-center gap-2 pl-1 pr-2 py-1.5 text-left
+          text-xs font-lora transition-colors
+          ${isActive
+            ? 'text-amber-900 border-l-2 -ml-px border-amber-500'
+            : 'text-slate-600'
+          }`}
+      >
+        <FileEdit size={11} className="text-slate-400 shrink-0" />
+        <span className="truncate flex-1">{page.label}</span>
+        {isActive && <ChevronRight size={11} />}
+      </button>
+
+      {/* Delete */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void onDeletePage(page.page.id, chapterId);
+        }}
+        className="p-1 text-slate-300 hover:text-red-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+        aria-label="Delete page"
+        title="Delete page"
+      >
+        <Trash2 size={12} />
+      </button>
+    </li>
   );
 }
