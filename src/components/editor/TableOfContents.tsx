@@ -1,20 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, BookOpen, Heart, FileText, ChevronRight, FileEdit, GripVertical, Trash2 } from 'lucide-react';
 import {
   DndContext,
-  closestCenter,
   KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
   DragEndEvent,
   DragStartEvent,
+  DragOverEvent,
   DragOverlay,
+  pointerWithin,
+  rectIntersection,
+  CollisionDetection,
+  UniqueIdentifier,
   useDroppable,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -31,10 +34,6 @@ interface TableOfContentsProps {
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
   onReorderPages: (chapterId: number, fromIndex: number, toIndex: number) => void | Promise<void>;
-  /**
-   * Move a page to a different chapter. `toIndex` is the destination index
-   * within the target chapter. If omitted, append to the end.
-   */
   onMovePageToChapter: (
     pageId: number,
     fromChapterId: number,
@@ -46,25 +45,38 @@ interface TableOfContentsProps {
 type ChapterNode = Extract<TocNode, { kind: 'chapter' }>;
 type PageNode = ChapterNode['pages'][number];
 
-/**
- * Slide-out left drawer showing the full editable structure of the book.
- * Page rows support drag-to-reorder within a chapter AND drag-across-chapters.
- */
+const CHAPTER_DROP_PREFIX = 'chapter-';
+const chapterDropId = (id: number) => `${CHAPTER_DROP_PREFIX}${id}`;
+const isChapterDropId = (id: UniqueIdentifier) => String(id).startsWith(CHAPTER_DROP_PREFIX);
+const parseChapterDropId = (id: UniqueIdentifier) => Number(String(id).slice(CHAPTER_DROP_PREFIX.length));
+
 export default function TableOfContents({
   open, onClose, toc, currentState, onNavigate,
   onDeletePage, onReorderPages, onMovePageToChapter,
 }: TableOfContentsProps) {
   const currentKey = stateKey(currentState);
+  const chapters = useMemo(
+    () => toc.filter((n): n is ChapterNode => n.kind === 'chapter'),
+    [toc],
+  );
 
-  // We need a flat lookup so we can resolve a dragged page id → its chapter & index
-  const chapters = toc.filter((n): n is ChapterNode => n.kind === 'chapter');
+  const pageChapterMap = useMemo(() => {
+    const m = new Map<number, number>();
+    chapters.forEach((ch) => ch.pages.forEach((p) => m.set(p.page.id, ch.chapter.id)));
+    return m;
+  }, [chapters]);
+
+  const findChapter = (chapterId: number) =>
+    chapters.find((c) => c.chapter.id === chapterId);
 
   const findPageLocation = (pageId: number) => {
-    for (const ch of chapters) {
-      const idx = ch.pages.findIndex((p) => p.page.id === pageId);
-      if (idx !== -1) return { chapter: ch, index: idx, page: ch.pages[idx] };
-    }
-    return null;
+    const chapterId = pageChapterMap.get(pageId);
+    if (chapterId == null) return null;
+    const chapter = findChapter(chapterId);
+    if (!chapter) return null;
+    const index = chapter.pages.findIndex((p) => p.page.id === pageId);
+    if (index < 0) return null;
+    return { chapter, index, page: chapter.pages[index] };
   };
 
   const sensors = useSensors(
@@ -73,6 +85,8 @@ export default function TableOfContents({
   );
 
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [overChapterId, setOverChapterId] = useState<number | null>(null);
+
   const activeLocation = activeId != null ? findPageLocation(activeId) : null;
 
   const handleNav = (state: EditorState) => {
@@ -80,34 +94,51 @@ export default function TableOfContents({
     if (window.innerWidth < 768) onClose();
   };
 
+  // Pointer-first collision detection — required for reliable cross-chapter
+  // detection. closestCenter tends to snap back to the source list's pages.
+  const collisionDetection: CollisionDetection = (args) => {
+    const pointerHits = pointerWithin(args);
+    if (pointerHits.length > 0) return pointerHits;
+    return rectIntersection(args);
+  };
+
+  const resolveOverChapterId = (overId: UniqueIdentifier | null | undefined): number | null => {
+    if (overId == null) return null;
+    if (isChapterDropId(overId)) return parseChapterDropId(overId);
+    const chId = pageChapterMap.get(Number(overId));
+    return chId ?? null;
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(Number(event.active.id));
+  };
+
+  const handleDragOver = (event: DragOverEvent) => {
+    setOverChapterId(resolveOverChapterId(event.over?.id));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     setActiveId(null);
+    setOverChapterId(null);
     if (!over) return;
 
     const activePageId = Number(active.id);
     const from = findPageLocation(activePageId);
     if (!from) return;
 
-    // The `over` target can be either another page (id = page id) or
-    // a chapter drop zone (id = `chapter-${chapterId}`).
-    const overId = String(over.id);
-
     let toChapter: ChapterNode | undefined;
     let toIndex: number;
 
-    if (overId.startsWith('chapter-')) {
-      const targetChapterId = Number(overId.slice('chapter-'.length));
-      toChapter = chapters.find((c) => c.chapter.id === targetChapterId);
+    if (isChapterDropId(over.id)) {
+      const targetChapterId = parseChapterDropId(over.id);
+      toChapter = findChapter(targetChapterId);
       if (!toChapter) return;
-      // Append to the end of the target chapter (or stay put if same chapter & last)
-      toIndex = toChapter.pages.length;
+      // Dropped on the chapter container itself → append to end
+      // (excluding the dragged page if it was already in this chapter).
+      toIndex = toChapter.pages.filter((p) => p.page.id !== activePageId).length;
     } else {
-      const overPageId = Number(overId);
+      const overPageId = Number(over.id);
       const overLoc = findPageLocation(overPageId);
       if (!overLoc) return;
       toChapter = overLoc.chapter;
@@ -120,8 +151,6 @@ export default function TableOfContents({
       if (from.index === toIndex) return;
       void onReorderPages(from.chapter.chapter.id, from.index, toIndex);
     } else {
-      // Cross-chapter move. If we dropped on a page, place at that page's index;
-      // dnd-kit semantics: inserting at `toIndex` pushes the existing row down.
       void onMovePageToChapter(
         activePageId,
         from.chapter.chapter.id,
@@ -131,11 +160,10 @@ export default function TableOfContents({
     }
   };
 
-  const handleDragCancel = () => setActiveId(null);
-
-  // Flat list of all page ids across all chapters — required so cross-chapter
-  // drag works as a single sortable space.
-  const allPageIds = chapters.flatMap((c) => c.pages.map((p) => p.page.id));
+  const handleDragCancel = () => {
+    setActiveId(null);
+    setOverChapterId(null);
+  };
 
   return (
     <AnimatePresence>
@@ -173,53 +201,57 @@ export default function TableOfContents({
             <nav className="flex-1 overflow-y-auto p-3">
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
+                collisionDetection={collisionDetection}
                 onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
               >
-                <SortableContext items={allPageIds} strategy={verticalListSortingStrategy}>
-                  {toc.map((node, i) => {
-                    if (node.kind === 'book-section') {
-                      const isActive = stateKey(node.state) === currentKey;
-                      const Icon = node.label === 'Cover' ? BookOpen
-                                : node.label === 'Dedication' ? Heart
-                                : FileText;
-                      return (
-                        <button
-                          key={`sec-${i}`}
-                          onClick={() => handleNav(node.state)}
-                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left
-                            font-avenir text-sm transition-colors
-                            ${isActive
-                              ? 'bg-slate-800 text-white'
-                              : 'text-slate-700 hover:bg-slate-100'
-                            }`}
-                        >
-                          <Icon size={14} />
-                          {node.label}
-                        </button>
-                      );
-                    }
-
-                    const chapterActive = stateKey(node.state) === currentKey;
+                {toc.map((node, i) => {
+                  if (node.kind === 'book-section') {
+                    const isActive = stateKey(node.state) === currentKey;
+                    const Icon = node.label === 'Cover' ? BookOpen
+                              : node.label === 'Dedication' ? Heart
+                              : FileText;
                     return (
-                      <ChapterBlock
-                        key={`ch-${node.chapter.id}`}
-                        node={node}
-                        chapterActive={chapterActive}
-                        currentKey={currentKey}
-                        onNavigate={handleNav}
-                        onDeletePage={onDeletePage}
-                        isDraggingAcross={activeLocation != null && activeLocation.chapter.chapter.id !== node.chapter.id}
-                      />
+                      <button
+                        key={`sec-${i}`}
+                        onClick={() => handleNav(node.state)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left
+                          font-avenir text-sm transition-colors
+                          ${isActive
+                            ? 'bg-slate-800 text-white'
+                            : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                      >
+                        <Icon size={14} />
+                        {node.label}
+                      </button>
                     );
-                  })}
-                </SortableContext>
+                  }
+
+                  const chapterActive = stateKey(node.state) === currentKey;
+                  const isDraggingPage = activeLocation != null;
+                  const isOtherChapter = isDraggingPage
+                    && activeLocation!.chapter.chapter.id !== node.chapter.id;
+
+                  return (
+                    <ChapterBlock
+                      key={`ch-${node.chapter.id}`}
+                      node={node}
+                      chapterActive={chapterActive}
+                      currentKey={currentKey}
+                      onNavigate={handleNav}
+                      onDeletePage={onDeletePage}
+                      highlightAsTarget={isOtherChapter && overChapterId === node.chapter.id}
+                      showEmptyHint={isOtherChapter}
+                    />
+                  );
+                })}
 
                 <DragOverlay>
                   {activeLocation ? (
-                    <div className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-r-lg bg-white shadow-lg border border-slate-200 text-xs font-lora text-slate-700">
+                    <div className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-md bg-white shadow-lg border border-slate-200 text-xs font-lora text-slate-700">
                       <GripVertical size={12} className="text-slate-400" />
                       <FileEdit size={11} className="text-slate-400" />
                       <span className="truncate max-w-[200px]">{activeLocation.page.label}</span>
@@ -241,22 +273,22 @@ export default function TableOfContents({
   );
 }
 
-// ── A chapter row + its (droppable) page list ─────────────────────
+// ── Chapter block: header + droppable list with its own SortableContext ─────
 interface ChapterBlockProps {
   node: ChapterNode;
   chapterActive: boolean;
   currentKey: string;
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
-  isDraggingAcross: boolean;
+  highlightAsTarget: boolean;
+  showEmptyHint: boolean;
 }
 
 function ChapterBlock({
-  node, chapterActive, currentKey, onNavigate, onDeletePage, isDraggingAcross,
+  node, chapterActive, currentKey, onNavigate, onDeletePage,
+  highlightAsTarget, showEmptyHint,
 }: ChapterBlockProps) {
-  // Make the chapter itself a droppable zone so empty chapters (or the
-  // gap below the last page) can receive a page.
-  const { setNodeRef, isOver } = useDroppable({ id: `chapter-${node.chapter.id}` });
+  const pageIds = useMemo(() => node.pages.map((p) => p.page.id), [node.pages]);
 
   return (
     <div className="mt-3">
@@ -275,41 +307,68 @@ function ChapterBlock({
         <span className="flex-1 truncate">{node.chapter.title}</span>
       </button>
 
-      <div
-        ref={setNodeRef}
-        className={`mt-1 ml-3 border-l rounded-r-md transition-colors
-          ${isOver && isDraggingAcross
-            ? 'border-amber-400 bg-amber-50/40'
-            : 'border-slate-200'}
-          ${node.pages.length === 0 && isDraggingAcross ? 'min-h-[28px]' : ''}
-        `}
+      <SortableContext
+        id={chapterDropId(node.chapter.id)}
+        items={pageIds}
+        strategy={verticalListSortingStrategy}
       >
-        {node.pages.length === 0 ? (
-          isDraggingAcross ? (
-            <p className="text-[11px] font-avenir text-slate-400 px-3 py-1.5 italic">
-              Drop here to add to this chapter
-            </p>
-          ) : null
-        ) : (
-          <ul>
-            {node.pages.map((p) => (
-              <SortablePageRow
-                key={p.page.id}
-                page={p}
-                chapterId={node.chapter.id}
-                isActive={stateKey(p.state) === currentKey}
-                onNavigate={onNavigate}
-                onDeletePage={onDeletePage}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+        <DroppableChapterArea
+          chapterId={node.chapter.id}
+          highlight={highlightAsTarget}
+          isEmpty={node.pages.length === 0}
+          showEmptyHint={showEmptyHint}
+        >
+          {node.pages.length > 0 && (
+            <ul>
+              {node.pages.map((p) => (
+                <SortablePageRow
+                  key={p.page.id}
+                  page={p}
+                  chapterId={node.chapter.id}
+                  isActive={stateKey(p.state) === currentKey}
+                  onNavigate={onNavigate}
+                  onDeletePage={onDeletePage}
+                />
+              ))}
+            </ul>
+          )}
+        </DroppableChapterArea>
+      </SortableContext>
     </div>
   );
 }
 
-// ── A single draggable + deletable page row ───────────────────────
+interface DroppableChapterAreaProps {
+  chapterId: number;
+  highlight: boolean;
+  isEmpty: boolean;
+  showEmptyHint: boolean;
+  children: React.ReactNode;
+}
+
+function DroppableChapterArea({
+  chapterId, highlight, isEmpty, showEmptyHint, children,
+}: DroppableChapterAreaProps) {
+  const { setNodeRef } = useDroppable({ id: chapterDropId(chapterId) });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`mt-1 ml-3 border-l rounded-r-md transition-colors
+        ${highlight ? 'border-amber-400 bg-amber-50/60' : 'border-slate-200'}
+        ${isEmpty && showEmptyHint ? 'min-h-[34px]' : ''}
+      `}
+    >
+      {isEmpty && showEmptyHint && (
+        <p className="text-[11px] font-avenir text-slate-400 px-3 py-2 italic">
+          Drop here
+        </p>
+      )}
+      {children}
+    </div>
+  );
+}
+
 interface SortablePageRowProps {
   page: PageNode;
   chapterId: number;
@@ -338,7 +397,6 @@ function SortablePageRow({
       className={`group flex items-center pr-1 rounded-r-lg
         ${isActive ? 'bg-amber-50' : 'hover:bg-slate-50'}`}
     >
-      {/* Drag handle */}
       <button
         type="button"
         {...attributes}
@@ -349,7 +407,6 @@ function SortablePageRow({
         <GripVertical size={12} />
       </button>
 
-      {/* Click-to-navigate label */}
       <button
         onClick={() => onNavigate(page.state)}
         className={`flex-1 flex items-center gap-2 pl-1 pr-2 py-1.5 text-left
@@ -364,7 +421,6 @@ function SortablePageRow({
         {isActive && <ChevronRight size={11} />}
       </button>
 
-      {/* Delete */}
       <button
         type="button"
         onClick={(e) => {
