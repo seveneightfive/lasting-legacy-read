@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, BookOpen, Heart, FileText, ChevronRight, FileEdit, GripVertical, Trash2 } from 'lucide-react';
+import { X, BookOpen, Heart, FileText, ChevronRight, FileEdit, GripVertical, Trash2, Plus } from 'lucide-react';
 import {
   DndContext,
   KeyboardSensor,
@@ -40,6 +40,11 @@ interface TableOfContentsProps {
     toChapterId: number,
     toIndex: number,
   ) => void | Promise<void>;
+  /**
+   * Create a new page inside the given chapter. Should append the page to the
+   * end of the chapter and navigate the editor to it.
+   */
+  onAddPage: (chapterId: number) => void | Promise<void>;
 }
 
 type ChapterNode = Extract<TocNode, { kind: 'chapter' }>;
@@ -52,7 +57,7 @@ const parseChapterDropId = (id: UniqueIdentifier) => Number(String(id).slice(CHA
 
 export default function TableOfContents({
   open, onClose, toc, currentState, onNavigate,
-  onDeletePage, onReorderPages, onMovePageToChapter,
+  onDeletePage, onReorderPages, onMovePageToChapter, onAddPage,
 }: TableOfContentsProps) {
   const currentKey = stateKey(currentState);
   const chapters = useMemo(
@@ -86,6 +91,7 @@ export default function TableOfContents({
 
   const [activeId, setActiveId] = useState<number | null>(null);
   const [overChapterId, setOverChapterId] = useState<number | null>(null);
+  const [pendingChapterId, setPendingChapterId] = useState<number | null>(null);
 
   const activeLocation = activeId != null ? findPageLocation(activeId) : null;
 
@@ -94,8 +100,16 @@ export default function TableOfContents({
     if (window.innerWidth < 768) onClose();
   };
 
-  // Pointer-first collision detection — required for reliable cross-chapter
-  // detection. closestCenter tends to snap back to the source list's pages.
+  const handleAddPage = async (chapterId: number) => {
+    if (pendingChapterId != null) return;
+    setPendingChapterId(chapterId);
+    try {
+      await onAddPage(chapterId);
+    } finally {
+      setPendingChapterId(null);
+    }
+  };
+
   const collisionDetection: CollisionDetection = (args) => {
     const pointerHits = pointerWithin(args);
     if (pointerHits.length > 0) return pointerHits;
@@ -134,8 +148,6 @@ export default function TableOfContents({
       const targetChapterId = parseChapterDropId(over.id);
       toChapter = findChapter(targetChapterId);
       if (!toChapter) return;
-      // Dropped on the chapter container itself → append to end
-      // (excluding the dragged page if it was already in this chapter).
       toIndex = toChapter.pages.filter((p) => p.page.id !== activePageId).length;
     } else {
       const overPageId = Number(over.id);
@@ -243,6 +255,8 @@ export default function TableOfContents({
                       currentKey={currentKey}
                       onNavigate={handleNav}
                       onDeletePage={onDeletePage}
+                      onAddPage={handleAddPage}
+                      isAddingPage={pendingChapterId === node.chapter.id}
                       highlightAsTarget={isOtherChapter && overChapterId === node.chapter.id}
                       showEmptyHint={isOtherChapter}
                     />
@@ -273,25 +287,27 @@ export default function TableOfContents({
   );
 }
 
-// ── Chapter block: header + droppable list with its own SortableContext ─────
 interface ChapterBlockProps {
   node: ChapterNode;
   chapterActive: boolean;
   currentKey: string;
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
+  onAddPage: (chapterId: number) => void | Promise<void>;
+  isAddingPage: boolean;
   highlightAsTarget: boolean;
   showEmptyHint: boolean;
 }
 
 function ChapterBlock({
   node, chapterActive, currentKey, onNavigate, onDeletePage,
-  highlightAsTarget, showEmptyHint,
+  onAddPage, isAddingPage, highlightAsTarget, showEmptyHint,
 }: ChapterBlockProps) {
   const pageIds = useMemo(() => node.pages.map((p) => p.page.id), [node.pages]);
+  const isEmpty = node.pages.length === 0;
 
   return (
-    <div className="mt-3">
+    <div className="group/chapter mt-3">
       <button
         onClick={() => onNavigate(node.state)}
         className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left
@@ -315,10 +331,10 @@ function ChapterBlock({
         <DroppableChapterArea
           chapterId={node.chapter.id}
           highlight={highlightAsTarget}
-          isEmpty={node.pages.length === 0}
+          isEmpty={isEmpty}
           showEmptyHint={showEmptyHint}
         >
-          {node.pages.length > 0 && (
+          {!isEmpty && (
             <ul>
               {node.pages.map((p) => (
                 <SortablePageRow
@@ -332,6 +348,24 @@ function ChapterBlock({
               ))}
             </ul>
           )}
+
+          {/* Add-page button: always visible for empty chapters, hover-reveal otherwise */}
+          <button
+            type="button"
+            onClick={() => onAddPage(node.chapter.id)}
+            disabled={isAddingPage}
+            className={`w-full flex items-center gap-2 pl-2 pr-3 py-1.5 text-left
+              text-xs font-avenir text-slate-400 hover:text-slate-700 hover:bg-slate-50
+              transition-all disabled:opacity-50 disabled:cursor-wait
+              ${isEmpty
+                ? 'opacity-100'
+                : 'opacity-0 group-hover/chapter:opacity-100 focus:opacity-100'}
+            `}
+            aria-label={`Add page to ${node.chapter.title}`}
+          >
+            <Plus size={12} className="shrink-0" />
+            <span>{isAddingPage ? 'Adding…' : 'Add page'}</span>
+          </button>
         </DroppableChapterArea>
       </SortableContext>
     </div>
