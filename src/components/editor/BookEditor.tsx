@@ -390,8 +390,9 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
             <div className="hidden sm:block">
               <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
             </div>
-            {/* Answer Questions button */}
             
+            {/* Answer Questions button */}
+            <a
               href="https://app.lastinglegacyonline.com/"
               target="_blank"
               rel="noopener noreferrer"
@@ -400,6 +401,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               <span className="hidden sm:inline">✍️ Answer Questions</span>
               <span className="sm:hidden">✍️</span>
             </a>
+          
             {/* Photo Library button */}
             <button
               onClick={() => setPhotoLibraryOpen(true)}
