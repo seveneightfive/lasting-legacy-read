@@ -107,18 +107,20 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const fetchPages = async (chapterId: number) => {
     setLoading(true);
     try {
-      const [pagesResult, galleryResult] = await Promise.all([
-        supabase
-          .from('pages')
-          .select('*')
-          .eq('chapter_id', chapterId)
-          .or('is_deleted.is.null,is_deleted.eq.false'),
-        supabase
-          .from('gallery')
-          .select('*')
-          .eq('chapter_id', chapterId)
-          .order('sort_order', { ascending: true }),
-      ]);
+      // In fetchPages — only load floating chapter gallery items (page_id = null)
+const [pagesResult, galleryResult] = await Promise.all([
+  supabase
+    .from('pages')
+    .select('*')
+    .eq('chapter_id', chapterId)
+    .or('is_deleted.is.null,is_deleted.eq.false'),
+  supabase
+    .from('gallery')
+    .select('*')
+    .eq('chapter_id', chapterId)
+    .is('page_id', null)          // ← only floating chapter photos
+    .order('sort_order', { ascending: true }),
+]);
       if (pagesResult.error) throw pagesResult.error;
       setPages(sortPagesForDisplay(pagesResult.data || []));
       setChapterGalleryItems(galleryResult.data || []);
@@ -185,9 +187,10 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const checkChapterHasGallery = async (chapterId: number): Promise<boolean> => {
     try {
       const { count, error } = await supabase
-        .from('gallery')
-        .select('*', { count: 'exact', head: true })
-        .eq('chapter_id', chapterId);
+  .from('gallery')
+  .select('*', { count: 'exact', head: true })
+  .eq('chapter_id', chapterId)
+  .is('page_id', null);           // ← same filter
       if (error) throw error;
       return (count || 0) > 0;
     } catch (error) {
