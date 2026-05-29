@@ -2,6 +2,7 @@ import React from 'react';
 import { Book, Chapter, GalleryItem } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
+import GalleryEditor from './GalleryEditor';
 import { TextField, SectionHeading, SectionKicker } from './formFields';
 
 interface ChapterTitleEditViewProps {
@@ -12,11 +13,6 @@ interface ChapterTitleEditViewProps {
   onGalleryChanged?: () => void;
 }
 
-/**
- * Chapter title screen: the form IS the heading.
- * Centered vertically so the small two-field form doesn't look orphaned
- * at the top of a tall column.
- */
 export default function ChapterTitleEditView({
   book, chapter, galleryItems, onChange, onGalleryChanged,
 }: ChapterTitleEditViewProps) {
