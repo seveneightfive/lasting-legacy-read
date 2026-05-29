@@ -391,8 +391,6 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
             </div>
             
-            {/* Answer Questions button */}
-            <a
               href="https://app.lastinglegacyonline.com/"
               target="_blank"
               rel="noopener noreferrer"
@@ -401,8 +399,6 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               <span className="hidden sm:inline">✍️ Answer Questions</span>
               <span className="sm:hidden">✍️</span>
             </a>
-          
-            {/* Photo Library button */}
             <button
               onClick={() => setPhotoLibraryOpen(true)}
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-full hover:bg-slate-50 hover:border-slate-300 transition-colors"
@@ -419,7 +415,14 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               <span className="sm:hidden">Exit</span>
             </button>
           </div>
-        
+        </div>
+        {/* Mobile breadcrumb */}
+        <div className="md:hidden px-4 pb-2">
+          {renderBreadcrumb()}
+        </div>
+      </div>
+
+      {/* Mobile save indicator */}
       <div className="sm:hidden px-4 py-2 bg-white border-b border-slate-100 flex justify-end">
         <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
       </div>
