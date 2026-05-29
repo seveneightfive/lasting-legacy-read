@@ -236,6 +236,106 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     await loadGallery(pageId);
   }, [galleryByPage, loadGallery]);
 
+  // ── Add a new page to a chapter ────────────────────────────────
+const handleAddPage = useCallback(async (chapterId: number) => {
+  if (!pagesByChapter.has(chapterId)) {
+    await loadPages(chapterId);
+  }
+  const existing = pagesByChapter.get(chapterId) ?? [];
+  const nextFinalOrder = existing.length;
+
+  const { data, error } = await supabase
+    .from('pages')
+    .insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
+    .select()
+    .single();
+
+  if (error || !data) {
+    console.error('Failed to add page:', error);
+    window.alert('Could not add a new page. Please try again.');
+    return;
+  }
+
+  void logRevision({ page_id: data.id, chapter_id: chapterId, book_id: book.id, field: 'created', new_value: String(nextFinalOrder) });
+
+  setPagesByChapter((prev) => {
+    const next = new Map(prev);
+    next.set(chapterId, [...(next.get(chapterId) ?? []), data]);
+    return next;
+  });
+
+  const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
+  if (chapterIndex >= 0) {
+    setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
+  }
+}, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
+
+// ── Move a page to a different chapter ─────────────────────────
+const handleMovePageToChapter = useCallback(async (
+  pageId: number,
+  fromChapterId: number,
+  toChapterId: number,
+  toIndex: number,
+) => {
+  if (fromChapterId === toChapterId) return;
+  if (!pagesByChapter.has(toChapterId)) await loadPages(toChapterId);
+
+  const fromPages = pagesByChapter.get(fromChapterId) ?? [];
+  const toPages = pagesByChapter.get(toChapterId) ?? [];
+  const pageToMove = fromPages.find((p) => p.id === pageId);
+  if (!pageToMove) return;
+
+  const newFromPages = fromPages.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i }));
+  const dest = toPages.filter((p) => p.id !== pageId);
+  dest.splice(Math.min(toIndex, dest.length), 0, { ...pageToMove, chapter_id: toChapterId });
+  const newToPages = dest.map((p, i) => ({ ...p, final_order: i }));
+
+  // Optimistic update
+  setPagesByChapter((prev) => {
+    const next = new Map(prev);
+    next.set(fromChapterId, newFromPages);
+    next.set(toChapterId, newToPages);
+    return next;
+  });
+
+  try {
+    const movedNewOrder = newToPages.findIndex((p) => p.id === pageId);
+    const { error } = await supabase.from('pages').update({ chapter_id: toChapterId, final_order: movedNewOrder }).eq('id', pageId);
+    if (error) throw error;
+    void logRevision({ page_id: pageId, chapter_id: toChapterId, book_id: book.id, field: 'chapter_id', previous_value: String(fromChapterId), new_value: String(toChapterId) });
+
+    await Promise.all(
+      newFromPages
+        .filter((p) => fromPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+        .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+    );
+    await Promise.all(
+      newToPages
+        .filter((p) => p.id !== pageId && toPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+        .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+    );
+  } catch (err) {
+    console.error('Failed to move page:', err);
+    setPagesByChapter((prev) => { const next = new Map(prev); next.set(fromChapterId, fromPages); next.set(toChapterId, toPages); return next; });
+    window.alert('Could not move the page. Please try again.');
+    return;
+  }
+
+  if (current.kind === 'page') {
+    const fromChapter = chapters[current.chapterIndex];
+    if (fromChapter?.id === fromChapterId) {
+      const movedIndex = fromPages.findIndex((p) => p.id === pageId);
+      if (movedIndex === current.pageIndex) {
+        const toChapterIndex = chapters.findIndex((c) => c.id === toChapterId);
+        const newPageIndex = newToPages.findIndex((p) => p.id === pageId);
+        if (toChapterIndex >= 0 && newPageIndex >= 0) setCurrent({ kind: 'page', chapterIndex: toChapterIndex, pageIndex: newPageIndex });
+      } else if (movedIndex < current.pageIndex) {
+        setCurrent((prev) => prev.kind === 'page' ? { ...prev, pageIndex: prev.pageIndex - 1 } : prev);
+      }
+    }
+  }
+}, [pagesByChapter, loadPages, current, chapters, book.id, logRevision]);
+
   // ── Soft-delete a page ─────────────────────────────────────────
   // We do NOT hard-delete because Whalesync uses Supabase rows to know
   // which Glide questions have been answered. A hard delete would let
