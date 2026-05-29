@@ -1,5 +1,5 @@
 import React from 'react';
-import { Book, Chapter } from '../../lib/supabase';
+import { Book, Chapter, GalleryItem } from '../../lib/supabase';
 import SplitScreenLayout from './SplitScreenLayout';
 import ImagePicker from './ImagePicker';
 import { TextField, SectionHeading, SectionKicker } from './formFields';
@@ -7,7 +7,9 @@ import { TextField, SectionHeading, SectionKicker } from './formFields';
 interface ChapterTitleEditViewProps {
   book: Book;
   chapter: Chapter;
+  galleryItems: GalleryItem[];
   onChange: (patch: Partial<Chapter>) => void;
+  onGalleryChanged?: () => void;
 }
 
 /**
@@ -15,7 +17,9 @@ interface ChapterTitleEditViewProps {
  * Centered vertically so the small two-field form doesn't look orphaned
  * at the top of a tall column.
  */
-export default function ChapterTitleEditView({ book, chapter, onChange }: ChapterTitleEditViewProps) {
+export default function ChapterTitleEditView({
+  book, chapter, galleryItems, onChange, onGalleryChanged,
+}: ChapterTitleEditViewProps) {
   return (
     <SplitScreenLayout
       rightAlign="center"
@@ -46,6 +50,16 @@ export default function ChapterTitleEditView({ book, chapter, onChange }: Chapte
             placeholder="A short line that sets up the chapter"
             multiline
           />
+
+          <div className="mt-8 pt-6 border-t border-slate-200">
+            <GalleryEditor
+              pageId={null}
+              chapterId={chapter.id}
+              bookSlug={book.slug}
+              initialItems={galleryItems}
+              onChanged={onGalleryChanged}
+            />
+          </div>
         </>
       }
     />
