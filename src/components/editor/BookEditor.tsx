@@ -24,26 +24,19 @@ interface BookEditorProps {
 export default function BookEditor({ book, chapters: initialChapters, pin, onExit }: BookEditorProps) {
   const [bookState, setBookState] = useState<Book>(book);
   const [chapters, setChapters] = useState<Chapter[]>(initialChapters);
-
   const [pagesByChapter, setPagesByChapter] = useState<Map<number, Page[]>>(new Map());
   const [galleryByPage, setGalleryByPage] = useState<Map<number, GalleryItem[]>>(new Map());
   const [galleryByChapter, setGalleryByChapter] = useState<Map<number, GalleryItem[]>>(new Map());
-
   const [current, setCurrent] = useState<EditorState>({ kind: 'cover' });
   const [tocOpen, setTocOpen] = useState(false);
   const [photoLibraryOpen, setPhotoLibraryOpen] = useState(false);
 
-  const toc = useMemo(
-    () => buildToc(bookState, chapters, pagesByChapter),
-    [bookState, chapters, pagesByChapter]
-  );
+  const toc = useMemo(() => buildToc(bookState, chapters, pagesByChapter), [bookState, chapters, pagesByChapter]);
   const allStates = useMemo(() => flattenStates(toc), [toc]);
 
   useEffect(() => {
     const firstChapter = chapters[0];
-    if (firstChapter && !pagesByChapter.has(firstChapter.id)) {
-      void loadPages(firstChapter.id);
-    }
+    if (firstChapter && !pagesByChapter.has(firstChapter.id)) void loadPages(firstChapter.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -62,19 +55,21 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
 
   const loadGallery = useCallback(async (pageId: number) => {
     const { data } = await supabase
-      .from('gallery').select('*').eq('page_id', pageId).order('sort_order', { ascending: true });
-    if (data) {
-      setGalleryByPage((prev) => { const next = new Map(prev); next.set(pageId, data); return next; });
-    }
+      .from('gallery')
+      .select('*')
+      .eq('page_id', pageId)
+      .order('sort_order', { ascending: true });
+    if (data) setGalleryByPage((prev) => { const next = new Map(prev); next.set(pageId, data); return next; });
   }, []);
 
   const loadChapterGallery = useCallback(async (chapterId: number) => {
     const { data } = await supabase
-      .from('gallery').select('*').eq('chapter_id', chapterId).is('page_id', null)
+      .from('gallery')
+      .select('*')
+      .eq('chapter_id', chapterId)
+      .is('page_id', null)
       .order('sort_order', { ascending: true });
-    if (data) {
-      setGalleryByChapter((prev) => { const next = new Map(prev); next.set(chapterId, data); return next; });
-    }
+    if (data) setGalleryByChapter((prev) => { const next = new Map(prev); next.set(chapterId, data); return next; });
   }, []);
 
   useEffect(() => {
@@ -103,9 +98,9 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
   }, [pin]);
 
   type DirtyPayload =
-    | { kind: 'book';    changes: Partial<Book> }
+    | { kind: 'book'; changes: Partial<Book> }
     | { kind: 'chapter'; chapterId: number; changes: Partial<Chapter> }
-    | { kind: 'page';    pageId: number; chapterId: number; changes: Partial<Page> };
+    | { kind: 'page'; pageId: number; chapterId: number; changes: Partial<Page> };
 
   const [dirty, setDirty] = useState<DirtyPayload | null>(null);
 
@@ -138,33 +133,34 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
 
   const updateBook = (patch: Partial<Book>) => {
     setBookState((prev) => ({ ...prev, ...patch }));
-    setDirty((prev) => {
-      if (prev?.kind === 'book') return { kind: 'book', changes: { ...prev.changes, ...patch } };
-      return { kind: 'book', changes: patch };
-    });
+    setDirty((prev) =>
+      prev?.kind === 'book'
+        ? { kind: 'book', changes: { ...prev.changes, ...patch } }
+        : { kind: 'book', changes: patch }
+    );
   };
 
   const updateChapter = (chapterId: number, patch: Partial<Chapter>) => {
-    setChapters((prev) => prev.map((c) => (c.id === chapterId ? { ...c, ...patch } : c)));
-    setDirty((prev) => {
-      if (prev?.kind === 'chapter' && prev.chapterId === chapterId)
-        return { kind: 'chapter', chapterId, changes: { ...prev.changes, ...patch } };
-      return { kind: 'chapter', chapterId, changes: patch };
-    });
+    setChapters((prev) => prev.map((c) => c.id === chapterId ? { ...c, ...patch } : c));
+    setDirty((prev) =>
+      prev?.kind === 'chapter' && prev.chapterId === chapterId
+        ? { kind: 'chapter', chapterId, changes: { ...prev.changes, ...patch } }
+        : { kind: 'chapter', chapterId, changes: patch }
+    );
   };
 
   const updatePage = (pageId: number, chapterId: number, patch: Partial<Page>) => {
     setPagesByChapter((prev) => {
       const next = new Map(prev);
       const list = next.get(chapterId) ?? [];
-      next.set(chapterId, list.map((p) => (p.id === pageId ? { ...p, ...patch } : p)));
+      next.set(chapterId, list.map((p) => p.id === pageId ? { ...p, ...patch } : p));
       return next;
     });
-    setDirty((prev) => {
-      if (prev?.kind === 'page' && prev.pageId === pageId)
-        return { kind: 'page', pageId, chapterId, changes: { ...prev.changes, ...patch } };
-      return { kind: 'page', pageId, chapterId, changes: patch };
-    });
+    setDirty((prev) =>
+      prev?.kind === 'page' && prev.pageId === pageId
+        ? { kind: 'page', pageId, chapterId, changes: { ...prev.changes, ...patch } }
+        : { kind: 'page', pageId, chapterId, changes: patch }
+    );
   };
 
   const handleAddToGallery = useCallback(async (
@@ -184,11 +180,21 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     const existing = pagesByChapter.get(chapterId) ?? [];
     const nextFinalOrder = existing.length;
     const { data, error } = await supabase
-      .from('pages').insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
-      .select().single();
-    if (error || !data) { console.error('Failed to add page:', error); window.alert('Could not add a new page. Please try again.'); return; }
+      .from('pages')
+      .insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
+      .select()
+      .single();
+    if (error || !data) {
+      console.error('Failed to add page:', error);
+      window.alert('Could not add a new page. Please try again.');
+      return;
+    }
     void logRevision({ page_id: data.id, chapter_id: chapterId, book_id: book.id, field: 'created', new_value: String(nextFinalOrder) });
-    setPagesByChapter((prev) => { const next = new Map(prev); next.set(chapterId, [...(next.get(chapterId) ?? []), data]); return next; });
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(chapterId, [...(next.get(chapterId) ?? []), data]);
+      return next;
+    });
     const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
     if (chapterIndex >= 0) setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
   }, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
@@ -206,17 +212,35 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     const dest = toPages.filter((p) => p.id !== pageId);
     dest.splice(Math.min(toIndex, dest.length), 0, { ...pageToMove, chapter_id: toChapterId });
     const newToPages = dest.map((p, i) => ({ ...p, final_order: i }));
-    setPagesByChapter((prev) => { const next = new Map(prev); next.set(fromChapterId, newFromPages); next.set(toChapterId, newToPages); return next; });
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(fromChapterId, newFromPages);
+      next.set(toChapterId, newToPages);
+      return next;
+    });
     try {
       const movedNewOrder = newToPages.findIndex((p) => p.id === pageId);
       const { error } = await supabase.from('pages').update({ chapter_id: toChapterId, final_order: movedNewOrder }).eq('id', pageId);
       if (error) throw error;
       void logRevision({ page_id: pageId, chapter_id: toChapterId, book_id: book.id, field: 'chapter_id', previous_value: String(fromChapterId), new_value: String(toChapterId) });
-      await Promise.all(newFromPages.filter((p) => fromPages.find((x) => x.id === p.id)?.final_order !== p.final_order).map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)));
-      await Promise.all(newToPages.filter((p) => p.id !== pageId && toPages.find((x) => x.id === p.id)?.final_order !== p.final_order).map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)));
+      await Promise.all(
+        newFromPages
+          .filter((p) => fromPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+          .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+      );
+      await Promise.all(
+        newToPages
+          .filter((p) => p.id !== pageId && toPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+          .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+      );
     } catch (err) {
       console.error('Failed to move page:', err);
-      setPagesByChapter((prev) => { const next = new Map(prev); next.set(fromChapterId, fromPages); next.set(toChapterId, toPages); return next; });
+      setPagesByChapter((prev) => {
+        const next = new Map(prev);
+        next.set(fromChapterId, fromPages);
+        next.set(toChapterId, toPages);
+        return next;
+      });
       window.alert('Could not move the page. Please try again.');
       return;
     }
@@ -240,15 +264,23 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     const pageToDelete = pagesInChapter.find((p) => p.id === pageId);
     if (!pageToDelete) return;
     const label = pageToDelete.subtitle?.trim() || `Page ${effectiveOrder(pageToDelete) + 1}`;
-    const ok = window.confirm(`Delete "${label}"?\n\nThe page will be hidden from your story. Photos linked to it will also be hidden. This can be undone by your administrator if needed.`);
+    const ok = window.confirm(
+      `Delete "${label}"?\n\nThe page will be hidden from your story. Photos linked to it will also be hidden. This can be undone by your administrator if needed.`
+    );
     if (!ok) return;
     if (dirty?.kind === 'page' && dirty.pageId === pageId) setDirty(null);
     else await autosave.flush();
     const { error: pageErr } = await supabase.from('pages').update({ is_deleted: true }).eq('id', pageId);
     if (pageErr) { console.error('Failed to delete page:', pageErr); window.alert('Could not delete this page. Please try again.'); return; }
     void logRevision({ page_id: pageId, chapter_id: chapterId, book_id: book.id, field: 'is_deleted', previous_value: 'false', new_value: 'true' });
-    const remaining = pagesInChapter.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i }));
-    await Promise.all(remaining.filter((p) => { const before = pagesInChapter.find((x) => x.id === p.id); return before?.final_order !== p.final_order; }).map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)));
+    const remaining = pagesInChapter
+      .filter((p) => p.id !== pageId)
+      .map((p, i) => ({ ...p, final_order: i }));
+    await Promise.all(
+      remaining
+        .filter((p) => { const before = pagesInChapter.find((x) => x.id === p.id); return before?.final_order !== p.final_order; })
+        .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+    );
     setPagesByChapter((prev) => { const next = new Map(prev); next.set(chapterId, remaining); return next; });
     setGalleryByPage((prev) => { const next = new Map(prev); next.delete(pageId); return next; });
     if (current.kind === 'page') {
@@ -274,7 +306,10 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     reordered.splice(toIndex, 0, moved);
     const renumbered = reordered.map((p, i) => ({ ...p, final_order: i }));
     setPagesByChapter((prev) => { const next = new Map(prev); next.set(chapterId, renumbered); return next; });
-    const changed = renumbered.filter((p) => { const before = existing.find((x) => x.id === p.id); return before?.final_order !== p.final_order; });
+    const changed = renumbered.filter((p) => {
+      const before = existing.find((x) => x.id === p.id);
+      return before?.final_order !== p.final_order;
+    });
     try {
       await Promise.all(changed.map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id)));
       void logRevision({ chapter_id: chapterId, book_id: book.id, field: 'final_order', new_value: `reordered ${changed.length} page(s)` });
@@ -365,9 +400,12 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
 
   return (
     <div className="min-h-screen bg-slate-50">
+
       {/* Top bar */}
       <div className="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-full px-4 py-3 flex items-center justify-between gap-4">
+
+          {/* Left: menu + title + breadcrumb */}
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <button
               onClick={() => setTocOpen(true)}
@@ -386,11 +424,13 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               {renderBreadcrumb()}
             </div>
           </div>
+
+          {/* Right: actions */}
           <div className="flex items-center gap-2 md:gap-3 shrink-0">
             <div className="hidden sm:block">
               <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
             </div>
-            
+            <a
               href="https://app.lastinglegacyonline.com/"
               target="_blank"
               rel="noopener noreferrer"
@@ -415,7 +455,9 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
               <span className="sm:hidden">Exit</span>
             </button>
           </div>
+
         </div>
+
         {/* Mobile breadcrumb */}
         <div className="md:hidden px-4 pb-2">
           {renderBreadcrumb()}
@@ -427,6 +469,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         <SaveIndicator status={autosave.status} lastSavedAt={autosave.lastSavedAt} />
       </div>
 
+      {/* Current view */}
       <AnimatePresence mode="wait">
         <motion.div
           key={stateKey(current)}
@@ -439,21 +482,33 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         </motion.div>
       </AnimatePresence>
 
+      {/* Bottom nav */}
       <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 px-4 py-3 flex items-center justify-between">
-        <button onClick={goPrev} disabled={!canPrev}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <ChevronLeft size={16} />Previous
+        <button
+          onClick={goPrev}
+          disabled={!canPrev}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <ChevronLeft size={16} />
+          Previous
         </button>
-        <button onClick={() => setTocOpen(true)}
-          className="text-sm font-avenir text-slate-500 hover:text-slate-700 hidden md:block">
+        <button
+          onClick={() => setTocOpen(true)}
+          className="text-sm font-avenir text-slate-500 hover:text-slate-700 hidden md:block"
+        >
           Jump to…
         </button>
-        <button onClick={goNext} disabled={!canNext}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          Next<ChevronRight size={16} />
+        <button
+          onClick={goNext}
+          disabled={!canNext}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-avenir text-slate-700 hover:bg-slate-100 rounded-full disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Next
+          <ChevronRight size={16} />
         </button>
       </div>
 
+      {/* TOC drawer */}
       <TableOfContents
         open={tocOpen}
         onClose={() => setTocOpen(false)}
@@ -466,12 +521,14 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         onAddPage={handleAddPage}
       />
 
+      {/* Photo library panel */}
       <PhotoLibrary
         open={photoLibraryOpen}
         onClose={() => setPhotoLibraryOpen(false)}
         book={bookState}
         chapters={chapters}
       />
+
     </div>
   );
 }
@@ -483,9 +540,19 @@ function BreadcrumbPill({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
+
 function NotFound() {
-  return <div className="p-10 text-center"><p className="text-slate-500 font-avenir">That section doesn't exist anymore.</p></div>;
+  return (
+    <div className="p-10 text-center">
+      <p className="text-slate-500 font-avenir">That section doesn't exist anymore.</p>
+    </div>
+  );
 }
+
 function Loading() {
-  return <div className="p-10 text-center"><p className="text-slate-500 font-avenir">Loading…</p></div>;
+  return (
+    <div className="p-10 text-center">
+      <p className="text-slate-500 font-avenir">Loading…</p>
+    </div>
+  );
 }
