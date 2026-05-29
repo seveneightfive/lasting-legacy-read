@@ -20,15 +20,6 @@ interface BookEditorProps {
   onExit: () => void;
 }
 
-/**
- * BookEditor — state-machine driven editor that mirrors the BookReader flow.
- *
- *   cover → dedication → intro → chapter-title → page → page → chapter-title → …
- *
- * The top bar shows context-specific breadcrumbs only for views that don't
- * already display their own heading (Intro, Page). Cover/Dedication/ChapterTitle
- * own their visual heading internally and keep the top bar minimal.
- */
 export default function BookEditor({ book, chapters: initialChapters, pin, onExit }: BookEditorProps) {
   // ── Editable state ─────────────────────────────────────────────
   const [bookState, setBookState] = useState<Book>(book);
@@ -36,6 +27,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
 
   const [pagesByChapter, setPagesByChapter] = useState<Map<number, Page[]>>(new Map());
   const [galleryByPage, setGalleryByPage] = useState<Map<number, GalleryItem[]>>(new Map());
+  const [galleryByChapter, setGalleryByChapter] = useState<Map<number, GalleryItem[]>>(new Map());
 
   const [current, setCurrent] = useState<EditorState>({ kind: 'cover' });
   const [tocOpen, setTocOpen] = useState(false);
@@ -60,7 +52,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
       .from('pages')
       .select('*')
       .eq('chapter_id', chapterId)
-      .or('is_deleted.is.null,is_deleted.eq.false');  // tolerate legacy NULLs
+      .or('is_deleted.is.null,is_deleted.eq.false');
     if (error) {
       console.error('Failed to load pages:', error);
       return;
@@ -74,7 +66,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
       });
     }
   }, []);
-  
+
   const loadGallery = useCallback(async (pageId: number) => {
     const { data } = await supabase
       .from('gallery')
@@ -90,11 +82,33 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     }
   }, []);
 
+  const loadChapterGallery = useCallback(async (chapterId: number) => {
+    const { data } = await supabase
+      .from('gallery')
+      .select('*')
+      .eq('chapter_id', chapterId)
+      .is('page_id', null)
+      .order('sort_order', { ascending: true });
+    if (data) {
+      setGalleryByChapter((prev) => {
+        const next = new Map(prev);
+        next.set(chapterId, data);
+        return next;
+      });
+    }
+  }, []);
+
   useEffect(() => {
     if (current.kind === 'chapter-title' || current.kind === 'page') {
       const chapter = chapters[current.chapterIndex];
       if (chapter && !pagesByChapter.has(chapter.id)) {
         void loadPages(chapter.id);
+      }
+    }
+    if (current.kind === 'chapter-title') {
+      const chapter = chapters[current.chapterIndex];
+      if (chapter && !galleryByChapter.has(chapter.id)) {
+        void loadChapterGallery(chapter.id);
       }
     }
     if (current.kind === 'page') {
@@ -105,7 +119,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         void loadGallery(page.id);
       }
     }
-  }, [current, chapters, pagesByChapter, galleryByPage, loadPages, loadGallery]);
+  }, [current, chapters, pagesByChapter, galleryByPage, galleryByChapter, loadPages, loadGallery, loadChapterGallery]);
 
   // ── Revisions ──────────────────────────────────────────────────
   const logRevision = useCallback(async (params: {
@@ -237,111 +251,105 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
   }, [galleryByPage, loadGallery]);
 
   // ── Add a new page to a chapter ────────────────────────────────
-const handleAddPage = useCallback(async (chapterId: number) => {
-  if (!pagesByChapter.has(chapterId)) {
-    await loadPages(chapterId);
-  }
-  const existing = pagesByChapter.get(chapterId) ?? [];
-  const nextFinalOrder = existing.length;
+  const handleAddPage = useCallback(async (chapterId: number) => {
+    if (!pagesByChapter.has(chapterId)) {
+      await loadPages(chapterId);
+    }
+    const existing = pagesByChapter.get(chapterId) ?? [];
+    const nextFinalOrder = existing.length;
 
-  const { data, error } = await supabase
-    .from('pages')
-    .insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
-    .select()
-    .single();
+    const { data, error } = await supabase
+      .from('pages')
+      .insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
+      .select()
+      .single();
 
-  if (error || !data) {
-    console.error('Failed to add page:', error);
-    window.alert('Could not add a new page. Please try again.');
-    return;
-  }
+    if (error || !data) {
+      console.error('Failed to add page:', error);
+      window.alert('Could not add a new page. Please try again.');
+      return;
+    }
 
-  void logRevision({ page_id: data.id, chapter_id: chapterId, book_id: book.id, field: 'created', new_value: String(nextFinalOrder) });
+    void logRevision({ page_id: data.id, chapter_id: chapterId, book_id: book.id, field: 'created', new_value: String(nextFinalOrder) });
 
-  setPagesByChapter((prev) => {
-    const next = new Map(prev);
-    next.set(chapterId, [...(next.get(chapterId) ?? []), data]);
-    return next;
-  });
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(chapterId, [...(next.get(chapterId) ?? []), data]);
+      return next;
+    });
 
-  const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
-  if (chapterIndex >= 0) {
-    setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
-  }
-}, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
+    const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
+    if (chapterIndex >= 0) {
+      setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
+    }
+  }, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
 
-// ── Move a page to a different chapter ─────────────────────────
-const handleMovePageToChapter = useCallback(async (
-  pageId: number,
-  fromChapterId: number,
-  toChapterId: number,
-  toIndex: number,
-) => {
-  if (fromChapterId === toChapterId) return;
-  if (!pagesByChapter.has(toChapterId)) await loadPages(toChapterId);
+  // ── Move a page to a different chapter ─────────────────────────
+  const handleMovePageToChapter = useCallback(async (
+    pageId: number,
+    fromChapterId: number,
+    toChapterId: number,
+    toIndex: number,
+  ) => {
+    if (fromChapterId === toChapterId) return;
+    if (!pagesByChapter.has(toChapterId)) await loadPages(toChapterId);
 
-  const fromPages = pagesByChapter.get(fromChapterId) ?? [];
-  const toPages = pagesByChapter.get(toChapterId) ?? [];
-  const pageToMove = fromPages.find((p) => p.id === pageId);
-  if (!pageToMove) return;
+    const fromPages = pagesByChapter.get(fromChapterId) ?? [];
+    const toPages = pagesByChapter.get(toChapterId) ?? [];
+    const pageToMove = fromPages.find((p) => p.id === pageId);
+    if (!pageToMove) return;
 
-  const newFromPages = fromPages.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i }));
-  const dest = toPages.filter((p) => p.id !== pageId);
-  dest.splice(Math.min(toIndex, dest.length), 0, { ...pageToMove, chapter_id: toChapterId });
-  const newToPages = dest.map((p, i) => ({ ...p, final_order: i }));
+    const newFromPages = fromPages.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i }));
+    const dest = toPages.filter((p) => p.id !== pageId);
+    dest.splice(Math.min(toIndex, dest.length), 0, { ...pageToMove, chapter_id: toChapterId });
+    const newToPages = dest.map((p, i) => ({ ...p, final_order: i }));
 
-  // Optimistic update
-  setPagesByChapter((prev) => {
-    const next = new Map(prev);
-    next.set(fromChapterId, newFromPages);
-    next.set(toChapterId, newToPages);
-    return next;
-  });
+    setPagesByChapter((prev) => {
+      const next = new Map(prev);
+      next.set(fromChapterId, newFromPages);
+      next.set(toChapterId, newToPages);
+      return next;
+    });
 
-  try {
-    const movedNewOrder = newToPages.findIndex((p) => p.id === pageId);
-    const { error } = await supabase.from('pages').update({ chapter_id: toChapterId, final_order: movedNewOrder }).eq('id', pageId);
-    if (error) throw error;
-    void logRevision({ page_id: pageId, chapter_id: toChapterId, book_id: book.id, field: 'chapter_id', previous_value: String(fromChapterId), new_value: String(toChapterId) });
+    try {
+      const movedNewOrder = newToPages.findIndex((p) => p.id === pageId);
+      const { error } = await supabase.from('pages').update({ chapter_id: toChapterId, final_order: movedNewOrder }).eq('id', pageId);
+      if (error) throw error;
+      void logRevision({ page_id: pageId, chapter_id: toChapterId, book_id: book.id, field: 'chapter_id', previous_value: String(fromChapterId), new_value: String(toChapterId) });
 
-    await Promise.all(
-      newFromPages
-        .filter((p) => fromPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
-        .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
-    );
-    await Promise.all(
-      newToPages
-        .filter((p) => p.id !== pageId && toPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
-        .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
-    );
-  } catch (err) {
-    console.error('Failed to move page:', err);
-    setPagesByChapter((prev) => { const next = new Map(prev); next.set(fromChapterId, fromPages); next.set(toChapterId, toPages); return next; });
-    window.alert('Could not move the page. Please try again.');
-    return;
-  }
+      await Promise.all(
+        newFromPages
+          .filter((p) => fromPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+          .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+      );
+      await Promise.all(
+        newToPages
+          .filter((p) => p.id !== pageId && toPages.find((x) => x.id === p.id)?.final_order !== p.final_order)
+          .map((p) => supabase.from('pages').update({ final_order: p.final_order }).eq('id', p.id))
+      );
+    } catch (err) {
+      console.error('Failed to move page:', err);
+      setPagesByChapter((prev) => { const next = new Map(prev); next.set(fromChapterId, fromPages); next.set(toChapterId, toPages); return next; });
+      window.alert('Could not move the page. Please try again.');
+      return;
+    }
 
-  if (current.kind === 'page') {
-    const fromChapter = chapters[current.chapterIndex];
-    if (fromChapter?.id === fromChapterId) {
-      const movedIndex = fromPages.findIndex((p) => p.id === pageId);
-      if (movedIndex === current.pageIndex) {
-        const toChapterIndex = chapters.findIndex((c) => c.id === toChapterId);
-        const newPageIndex = newToPages.findIndex((p) => p.id === pageId);
-        if (toChapterIndex >= 0 && newPageIndex >= 0) setCurrent({ kind: 'page', chapterIndex: toChapterIndex, pageIndex: newPageIndex });
-      } else if (movedIndex < current.pageIndex) {
-        setCurrent((prev) => prev.kind === 'page' ? { ...prev, pageIndex: prev.pageIndex - 1 } : prev);
+    if (current.kind === 'page') {
+      const fromChapter = chapters[current.chapterIndex];
+      if (fromChapter?.id === fromChapterId) {
+        const movedIndex = fromPages.findIndex((p) => p.id === pageId);
+        if (movedIndex === current.pageIndex) {
+          const toChapterIndex = chapters.findIndex((c) => c.id === toChapterId);
+          const newPageIndex = newToPages.findIndex((p) => p.id === pageId);
+          if (toChapterIndex >= 0 && newPageIndex >= 0) setCurrent({ kind: 'page', chapterIndex: toChapterIndex, pageIndex: newPageIndex });
+        } else if (movedIndex < current.pageIndex) {
+          setCurrent((prev) => prev.kind === 'page' ? { ...prev, pageIndex: prev.pageIndex - 1 } : prev);
+        }
       }
     }
-  }
-}, [pagesByChapter, loadPages, current, chapters, book.id, logRevision]);
+  }, [pagesByChapter, loadPages, current, chapters, book.id, logRevision]);
 
   // ── Soft-delete a page ─────────────────────────────────────────
-  // We do NOT hard-delete because Whalesync uses Supabase rows to know
-  // which Glide questions have been answered. A hard delete would let
-  // Whalesync re-create the page on its next sync. Instead we mark
-  // is_deleted=true and filter on read. Whalesync should be configured
-  // to leave rows where is_deleted=true alone.
   const handleDeletePage = useCallback(async (pageId: number, chapterId: number) => {
     const pagesInChapter = pagesByChapter.get(chapterId) ?? [];
     const pageToDelete = pagesInChapter.find((p) => p.id === pageId);
@@ -354,14 +362,12 @@ const handleMovePageToChapter = useCallback(async (
     );
     if (!ok) return;
 
-    // Flush any pending edits to this page first
     if (dirty?.kind === 'page' && dirty.pageId === pageId) {
       setDirty(null);
     } else {
       await autosave.flush();
     }
 
-    // Soft-delete the page
     const { error: pageErr } = await supabase
       .from('pages')
       .update({ is_deleted: true })
@@ -372,7 +378,6 @@ const handleMovePageToChapter = useCallback(async (
       return;
     }
 
-    // Log revision so it's auditable / recoverable
     void logRevision({
       page_id: pageId,
       chapter_id: chapterId,
@@ -382,8 +387,6 @@ const handleMovePageToChapter = useCallback(async (
       new_value: 'true',
     });
 
-    // Renumber final_order on remaining active pages.
-    // We rewrite final_order only — sort_order stays untouched (Glide-owned).
     const remaining = pagesInChapter
       .filter((p) => p.id !== pageId)
       .map((p, i) => ({ ...p, final_order: i }));
@@ -399,7 +402,6 @@ const handleMovePageToChapter = useCallback(async (
         )
     );
 
-    // Update local state
     setPagesByChapter((prev) => {
       const next = new Map(prev);
       next.set(chapterId, remaining);
@@ -411,7 +413,6 @@ const handleMovePageToChapter = useCallback(async (
       return next;
     });
 
-    // Navigate away if we were viewing the deleted page
     if (current.kind === 'page') {
       const chapter = chapters[current.chapterIndex];
       if (chapter?.id === chapterId) {
@@ -435,8 +436,6 @@ const handleMovePageToChapter = useCallback(async (
   }, [pagesByChapter, dirty, autosave, current, chapters, book.id, logRevision]);
 
   // ── Reorder pages within a chapter ─────────────────────────────
-  // Writes final_order ONLY. sort_order is owned by Glide/Whalesync and
-  // stays untouched so the question-answered state remains intact.
   const handleReorderPages = useCallback(async (
     chapterId: number,
     fromIndex: number,
@@ -451,17 +450,14 @@ const handleMovePageToChapter = useCallback(async (
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
 
-    // Reassign final_order sequentially. sort_order is left alone.
     const renumbered = reordered.map((p, i) => ({ ...p, final_order: i }));
 
-    // Optimistic local update
     setPagesByChapter((prev) => {
       const next = new Map(prev);
       next.set(chapterId, renumbered);
       return next;
     });
 
-    // Persist only rows whose final_order actually changed
     const changed = renumbered.filter((p) => {
       const before = existing.find((x) => x.id === p.id);
       return before?.final_order !== p.final_order;
@@ -481,7 +477,6 @@ const handleMovePageToChapter = useCallback(async (
       });
     } catch (err) {
       console.error('Failed to persist reorder:', err);
-      // Roll back
       setPagesByChapter((prev) => {
         const next = new Map(prev);
         next.set(chapterId, existing);
@@ -491,7 +486,6 @@ const handleMovePageToChapter = useCallback(async (
       return;
     }
 
-    // Keep tracking the same page if it moved
     if (current.kind === 'page') {
       const chapter = chapters[current.chapterIndex];
       if (chapter?.id === chapterId) {
@@ -525,11 +519,14 @@ const handleMovePageToChapter = useCallback(async (
     if (current.kind === 'chapter-title') {
       const chapter = chapters[current.chapterIndex];
       if (!chapter) return <NotFound />;
+      const chGalleryItems = galleryByChapter.get(chapter.id) ?? [];
       return (
         <ChapterTitleEditView
           book={bookState}
           chapter={chapter}
+          galleryItems={chGalleryItems}
           onChange={(patch) => updateChapter(chapter.id, patch)}
+          onGalleryChanged={() => loadChapterGallery(chapter.id)}
         />
       );
     }
@@ -559,7 +556,6 @@ const handleMovePageToChapter = useCallback(async (
   }
 
   // ── Top-bar breadcrumb ─────────────────────────────────────────
-  // Only shown for views that don't already display their own heading.
   function renderBreadcrumb(): React.ReactNode {
     if (current.kind === 'intro') {
       return <BreadcrumbPill>Introduction</BreadcrumbPill>;
@@ -630,7 +626,7 @@ const handleMovePageToChapter = useCallback(async (
           </div>
         </div>
 
-        {/* Mobile breadcrumb (sits below the main row) */}
+        {/* Mobile breadcrumb */}
         <div className="md:hidden px-4 pb-2">
           {renderBreadcrumb()}
         </div>
