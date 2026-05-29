@@ -34,9 +34,10 @@ export default function BookDedication({
             Dedication
           </h2>
 
-          <div className="font-lora text-xl md:text-2xl text-slate-700 leading-relaxed italic mb-16 whitespace-pre-wrap">
-            {dedication}
-          </div>
+          <div
+  className="font-lora text-xl md:text-2xl text-slate-700 leading-relaxed italic mb-16"
+  dangerouslySetInnerHTML={{ __html: dedication || '' }}
+/>
 
           <div className="flex items-center justify-center gap-4">
             <motion.button
