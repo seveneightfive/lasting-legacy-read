@@ -5,7 +5,7 @@ import { useImageUpload } from '../../hooks/useImageUpload';
 
 interface GalleryEditorProps {
   /** Page being edited (gallery items have page_id === pageId) */
-  pageId: number;
+  pageId: number | null;
   chapterId: number;
   /** Book slug, used for upload folder */
   bookSlug: string;
@@ -34,19 +34,27 @@ export default function GalleryEditor({
   // Sync if page changes
   useEffect(() => {
     setItems(initialItems);
-  }, [pageId, initialItems]);
+  }, [pageId, chapterId, initialItems]);
 
   const refresh = useCallback(async () => {
-    const { data, error: err } = await supabase
-      .from('gallery')
-      .select('*')
-      .eq('page_id', pageId)
-      .order('sort_order', { ascending: true });
-    if (!err && data) {
-      setItems(data);
-      onChanged?.();
-    }
-  }, [pageId, onChanged]);
+  let query = supabase
+    .from('gallery')
+    .select('*')
+    .eq('chapter_id', chapterId)
+    .order('sort_order', { ascending: true });
+
+  if (pageId === null) {
+    query = query.is('page_id', null);
+  } else {
+    query = query.eq('page_id', pageId);
+  }
+
+  const { data, error: err } = await query;
+  if (!err && data) {
+    setItems(data);
+    onChanged?.();
+  }
+}, [pageId, chapterId, onChanged]);
 
   // ── Add ───────────────────────────────────────────────────────
   const handleAddClick = () => fileInputRef.current?.click();
@@ -62,7 +70,7 @@ export default function GalleryEditor({
     const { error: insertErr } = await supabase.from('gallery').insert({
       image_url: uploaded.publicUrl,
       chapter_id: chapterId,
-      page_id: pageId,
+      page_id: pageId ?? null,
       sort_order: nextOrder,
     });
     if (insertErr) {
@@ -124,7 +132,7 @@ export default function GalleryEditor({
     <div>
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-avenir uppercase tracking-wider text-slate-500">
-          Gallery ({items.length})
+          {pageId === null ? 'Chapter Photo Gallery' : 'Gallery'} ({items.length})
         </h3>
         <button
           type="button"
@@ -138,6 +146,13 @@ export default function GalleryEditor({
           {uploading ? 'Uploading…' : 'Add photo'}
         </button>
       </div>
+
+      {pageId === null && (
+  <p className="mb-3 text-xs font-avenir text-slate-400">
+    Photos here float at the chapter level — not tied to any specific page.
+    They appear in the chapter gallery in the reader.
+  </p>
+)}
 
       {error && (
         <div className="mb-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
@@ -159,7 +174,9 @@ export default function GalleryEditor({
         >
           <ImageIcon size={24} className="text-slate-400" />
           <span className="text-sm font-avenir text-slate-600">
-            No gallery photos yet. Click to add one.
+            {pageId === null
+  ? 'No chapter gallery photos yet. Click to add one.'
+  : 'No gallery photos yet. Click to add one.'}
           </span>
         </button>
       ) : (
