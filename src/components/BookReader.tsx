@@ -31,23 +31,14 @@ type ReadingState =
   | 'guestbook'
   | 'thank-you';
 
-// Slug for Kay's own book — popups won't show there
 const KAY_MCFARLAND_SLUG = 'kay-mcfarland';
-
-// Page at which popup 1 triggers (2nd content page seen)
 const POPUP1_TRIGGER_PAGE = 2;
 
-/**
- * Returns true only if a field has real, renderable content.
- * Handles: null, undefined, empty string, whitespace-only string,
- * empty objects (e.g. empty TipTap docs), and empty arrays.
- */
 function hasContent(field: unknown): boolean {
   if (field == null) return false;
   if (typeof field === 'string') return field.trim().length > 0;
   if (Array.isArray(field)) return field.length > 0;
   if (typeof field === 'object') {
-    // Handle TipTap/ProseMirror-style doc nodes
     const doc = field as { content?: unknown[] };
     if (Array.isArray(doc.content)) return doc.content.length > 0;
     return Object.keys(field).length > 0;
@@ -62,17 +53,18 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const [pages, setPages] = useState<Page[]>([]);
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
   const [chapterGalleryItems, setChapterGalleryItems] = useState<GalleryItem[]>([]);
+
+  // Page-level gallery items keyed by page id — used by ChapterReader for gallery pages
+  const [pageGalleryItems, setPageGalleryItems] = useState<GalleryItem[]>([]);
+
   const [guestbookEntries, setGuestbookEntries] = useState<GuestbookEntry[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // Track total pages seen across the whole session for popup timing
   const [globalPageCount, setGlobalPageCount] = useState(0);
 
   const currentChapter = chapters[currentChapterIndex];
   const isAtEnd = currentState === 'guestbook' || currentState === 'thank-you';
   const isKayMcFarlandBook = book.slug === KAY_MCFARLAND_SLUG || book.user === KAY_MCFARLAND_SLUG;
 
-  // Normalized content flags — use these everywhere instead of truthy checks
   const hasDedication = hasContent(book.dedication);
   const hasIntro = hasContent(book.intro);
   const hasChapters = chapters.length > 0;
@@ -83,7 +75,6 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     isKayMcFarlandBook,
   });
 
-  // ── Increment global page counter whenever the reader advances ──
   const incrementPageCount = () => setGlobalPageCount(n => n + 1);
 
   useEffect(() => {
@@ -107,23 +98,32 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const fetchPages = async (chapterId: number) => {
     setLoading(true);
     try {
-      // In fetchPages — only load floating chapter gallery items (page_id = null)
-const [pagesResult, galleryResult] = await Promise.all([
-  supabase
-    .from('pages')
-    .select('*')
-    .eq('chapter_id', chapterId)
-    .or('is_deleted.is.null,is_deleted.eq.false'),
-  supabase
-    .from('gallery')
-    .select('*')
-    .eq('chapter_id', chapterId)
-    .is('page_id', null)          // ← only floating chapter photos
-    .order('sort_order', { ascending: true }),
-]);
+      const [pagesResult, chapterGalleryResult, pageGalleryResult] = await Promise.all([
+        supabase
+          .from('pages')
+          .select('*')
+          .eq('chapter_id', chapterId)
+          .or('is_deleted.is.null,is_deleted.eq.false'),
+        // Floating chapter-level gallery (no page_id) — used by ChapterSpecificGallery
+        supabase
+          .from('gallery')
+          .select('*')
+          .eq('chapter_id', chapterId)
+          .is('page_id', null)
+          .order('sort_order', { ascending: true }),
+        // Page-level gallery items — used by ChapterReader (including gallery pages)
+        supabase
+          .from('gallery')
+          .select('*')
+          .eq('chapter_id', chapterId)
+          .not('page_id', 'is', null)
+          .order('sort_order', { ascending: true }),
+      ]);
+
       if (pagesResult.error) throw pagesResult.error;
       setPages(sortPagesForDisplay(pagesResult.data || []));
-      setChapterGalleryItems(galleryResult.data || []);
+      setChapterGalleryItems(chapterGalleryResult.data || []);
+      setPageGalleryItems(pageGalleryResult.data || []);
     } catch (error) {
       console.error('Error fetching pages:', error);
     } finally {
@@ -187,10 +187,10 @@ const [pagesResult, galleryResult] = await Promise.all([
   const checkChapterHasGallery = async (chapterId: number): Promise<boolean> => {
     try {
       const { count, error } = await supabase
-  .from('gallery')
-  .select('*', { count: 'exact', head: true })
-  .eq('chapter_id', chapterId)
-  .is('page_id', null);           // ← same filter
+        .from('gallery')
+        .select('*', { count: 'exact', head: true })
+        .eq('chapter_id', chapterId)
+        .is('page_id', null);
       if (error) throw error;
       return (count || 0) > 0;
     } catch (error) {
@@ -200,46 +200,27 @@ const [pagesResult, galleryResult] = await Promise.all([
   };
 
   const handleNext = async () => {
-    // Don't allow advance from cover until chapters are loaded.
-    if (currentState === 'cover' && !hasChapters) {
-      return;
-    }
+    if (currentState === 'cover' && !hasChapters) return;
 
     let advanced = false;
 
     switch (currentState) {
       case 'cover':
-        if (hasDedication) {
-          setCurrentState('dedication');
-          advanced = true;
-        } else if (hasIntro) {
-          setCurrentState('intro');
-          advanced = true;
-        } else if (hasChapters) {
-          setCurrentState('chapter-title');
-          advanced = true;
-        }
+        if (hasDedication) { setCurrentState('dedication'); advanced = true; }
+        else if (hasIntro) { setCurrentState('intro'); advanced = true; }
+        else if (hasChapters) { setCurrentState('chapter-title'); advanced = true; }
         break;
 
       case 'dedication':
-        if (hasIntro) {
-          setCurrentState('intro');
-          advanced = true;
-        } else if (hasChapters) {
-          setCurrentState('chapter-title');
-          advanced = true;
-        }
+        if (hasIntro) { setCurrentState('intro'); advanced = true; }
+        else if (hasChapters) { setCurrentState('chapter-title'); advanced = true; }
         break;
 
       case 'intro':
-        if (hasChapters) {
-          setCurrentState('chapter-title');
-          advanced = true;
-        }
+        if (hasChapters) { setCurrentState('chapter-title'); advanced = true; }
         break;
 
       case 'chapter-title':
-        // Entering chapter content from the title page — start at page 0
         setCurrentPageIndex(0);
         setCurrentState('chapter-content');
         advanced = true;
@@ -290,14 +271,10 @@ const [pagesResult, galleryResult] = await Promise.all([
         break;
 
       case 'thank-you':
-        // End of book — nothing to advance to
         break;
     }
 
-    // Only bump the popup counter when the reader actually moved forward
-    if (advanced) {
-      incrementPageCount();
-    }
+    if (advanced) incrementPageCount();
   };
 
   const handlePrevious = async () => {
@@ -369,7 +346,7 @@ const [pagesResult, galleryResult] = await Promise.all([
 
   const handleNavigateToChapter = (index: number) => {
     setCurrentChapterIndex(index);
-    setCurrentPageIndex(0);  // jumping to a chapter starts you at its title
+    setCurrentPageIndex(0);
     setCurrentState('chapter-title');
   };
 
@@ -377,15 +354,11 @@ const [pagesResult, galleryResult] = await Promise.all([
     setCurrentChapterIndex(chapterIndex);
     setCurrentPageIndex(pageIndex);
     setCurrentState('chapter-content');
-    // The existing useEffect on `chapter-content` will fetch pages for
-    // the new chapter. Since fetchPages no longer resets currentPageIndex,
-    // the target page index is preserved.
   };
 
   const handleNavigateToGallery = () => setCurrentState('gallery');
   const handleNavigateToGuestbook = () => setCurrentState('guestbook');
 
-  // Navigate to Kay's book when user clicks the CTA
   const handleGoToKayStory = () => {
     window.location.href = '/book/kay-mcfarland';
   };
@@ -443,7 +416,7 @@ const [pagesResult, galleryResult] = await Promise.all([
           page={pages[currentPageIndex]}
           pageNumber={currentPageIndex + 1}
           totalPages={pages.length}
-          galleryItems={chapterGalleryItems}
+          galleryItems={pageGalleryItems}   {/* ← page-level items, not chapter floating ones */}
           onNext={handleNext}
           onPrevious={handlePrevious}
         />
@@ -475,25 +448,17 @@ const [pagesResult, galleryResult] = await Promise.all([
         <ThankYouPage book={book} onPrevious={handlePrevious} />
       )}
 
-      {/* ── McFarland Popup 1: subtle bottom banner, mid-reading ── */}
       {showPopup1 && (
         <McFarlandPopup1
           onClose={dismissPopup1}
-          onLearnMore={() => {
-            dismissPopup1();
-            handleGoToKayStory();
-          }}
+          onLearnMore={() => { dismissPopup1(); handleGoToKayStory(); }}
         />
       )}
 
-      {/* ── McFarland Popup 2: full modal, end of book ── */}
       {showPopup2 && (
         <McFarlandPopup2
           onClose={dismissPopup2}
-          onReadStory={() => {
-            dismissPopup2();
-            handleGoToKayStory();
-          }}
+          onReadStory={() => { dismissPopup2(); handleGoToKayStory(); }}
         />
       )}
     </div>
