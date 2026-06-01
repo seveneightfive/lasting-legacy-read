@@ -11,31 +11,35 @@ export interface Book {
   created_at?: string; date_published?: string; view_count?: number;
   filloutform_link?: string; user?: string;
   edit_pin?: string;
-  intro_image_url?: string;
-  intro_image_caption?: string;
 }
+
 export interface Chapter {
   id: number; title: string; lede?: string; book_id: number;
   number: number; image_url?: string; created_at?: string;
   user?: string; row_id?: string;
 }
+
 export interface Page {
   id: number; chapter_id: number; content?: string; image_url?: string;
   quote?: string; quote_attribute?: string; image_caption?: string;
   subtitle?: string; created_at?: string; sort_order?: number;
   final_order?: number; user?: string; row_id?: string;
-  is_deleted?: boolean;  // ← add this
+  is_deleted?: boolean;
+  gallery_page?: boolean | null;
 }
+
 export interface GalleryItem {
   id: number; image_title?: string; image_url: string;
   image_caption?: string; chapter_id: number; page_id?: number;
   created_at?: string; sort_order?: number; user?: string; row_id?: string;
 }
+
 export interface GuestbookEntry {
   id: number; message?: string; private?: string; recording?: string;
   guest?: string; book_id?: number; created_at?: string;
   user?: string; guest_email?: string;
 }
+
 export interface PageRevision {
   id: number;
   page_id?: number;
@@ -47,4 +51,5 @@ export interface PageRevision {
   edit_pin?: string;
   created_at?: string;
 }
+
 export type ChapterWithPages = Chapter & { pages: Page[]; };
