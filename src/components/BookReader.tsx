@@ -416,7 +416,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
           page={pages[currentPageIndex]}
           pageNumber={currentPageIndex + 1}
           totalPages={pages.length}
-          galleryItems={pageGalleryItems}   {/* ← page-level items, not chapter floating ones */}
+          galleryItems={pageGalleryItems}
           onNext={handleNext}
           onPrevious={handlePrevious}
         />
