@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { marked } from 'marked';
 import { Chapter, Page, GalleryItem } from '../lib/supabase';
 import { useIsDesktop } from '../hooks/useMediaQuery';
-import React, { useState, useEffect, useRef } from 'react';
 
 interface ChapterReaderProps {
   chapter: Chapter;
@@ -75,6 +74,124 @@ function PageImages({ images }: { images: GalleryItem[] }) {
   );
 }
 
+// ── GALLERY PAGE ──────────────────────────────────────────────
+// Full-width 3-col grid on desktop; horizontal snap-scroll on mobile.
+// Used when page.gallery_page === true.
+function GalleryPageLayout({
+  page,
+  images,
+  pageNumber,
+  totalPages,
+  chapter,
+  onNext,
+  onPrevious,
+}: {
+  page: Page;
+  images: GalleryItem[];
+  pageNumber: number;
+  totalPages: number;
+  chapter: Chapter;
+  onNext: () => void;
+  onPrevious: () => void;
+}) {
+  return (
+    <div className="min-h-screen bg-white flex flex-col">
+
+      {/* Scrollable gallery area */}
+      <div className="flex-1 overflow-y-auto px-4 md:px-10 py-8">
+        {page.subtitle && (
+          <h2 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
+            {page.subtitle}
+          </h2>
+        )}
+
+        {images.length === 0 ? (
+          <p className="text-slate-400 text-sm font-avenir">No photos on this page yet.</p>
+        ) : (
+          <>
+            {/* Desktop: equal 3-col grid */}
+            <div className="hidden md:grid grid-cols-3 gap-2">
+              {images.map(img => (
+                <GalleryCell key={img.id} img={img} />
+              ))}
+            </div>
+
+            {/* Mobile: horizontal snap-scroll */}
+            <div className="flex md:hidden gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory">
+              {images.map(img => (
+                <div key={img.id} className="flex-none w-[75vw] snap-start">
+                  <GalleryCell img={img} />
+                </div>
+              ))}
+            </div>
+
+            {images.length > 1 && (
+              <p className="md:hidden text-xs text-slate-400 mt-2 text-center font-avenir">
+                Swipe to see all photos
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Bottom nav — same style as the rest of the reader */}
+      <div className="border-t border-slate-200 bg-white px-8 pt-4 pb-6">
+        <div className="max-w-2xl mx-auto mb-2">
+          <p className="text-slate-400 text-xs font-avenir">
+            Chapter {chapter.number}: {chapter.title}
+            {chapter.lede && <span className="italic"> — {chapter.lede}</span>}
+          </p>
+        </div>
+        <div className="flex justify-between items-center max-w-2xl mx-auto">
+          <button
+            onClick={onPrevious}
+            className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors"
+          >
+            ← Previous
+          </button>
+          <span className="text-slate-500 text-sm font-avenir">
+            Page {pageNumber} of {totalPages}
+          </span>
+          <button
+            onClick={onNext}
+            className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GalleryCell({ img }: { img: GalleryItem }) {
+  return (
+    <figure className="m-0 relative overflow-hidden rounded-lg bg-slate-100 aspect-[4/3]">
+      <img
+        src={img.image_url}
+        alt={img.image_caption || img.image_title || ''}
+        className="absolute inset-0 w-full h-full object-cover"
+        loading="lazy"
+      />
+      {(img.image_title || img.image_caption) && (
+        <figcaption className="absolute bottom-0 left-0 right-0 px-3 py-2 bg-gradient-to-t from-black/60 to-transparent">
+          {img.image_title && (
+            <p className="text-white text-xs font-avenir font-medium leading-tight">
+              {img.image_title}
+            </p>
+          )}
+          {img.image_caption && img.image_caption !== img.image_title && (
+            <p className="text-white/80 text-xs font-lora italic leading-tight mt-0.5">
+              {img.image_caption}
+            </p>
+          )}
+        </figcaption>
+      )}
+    </figure>
+  );
+}
+
+// ── MAIN EXPORT ───────────────────────────────────────────────
 export default function ChapterReader({
   chapter,
   page,
@@ -94,13 +211,25 @@ export default function ChapterReader({
   const handleNextClick = () => { setSlideDirection('left'); onNext(); };
   const handlePreviousClick = () => { setSlideDirection('right'); onPrevious(); };
 
-const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [pageNumber]);
 
-useEffect(() => {
-  if (scrollRef.current) {
-    scrollRef.current.scrollTop = 0;
+  // ── GALLERY PAGE (overrides both layouts) ────────────────────
+  if (page.gallery_page) {
+    return (
+      <GalleryPageLayout
+        page={page}
+        images={pageImages}
+        pageNumber={pageNumber}
+        totalPages={totalPages}
+        chapter={chapter}
+        onNext={handleNextClick}
+        onPrevious={handlePreviousClick}
+      />
+    );
   }
-}, [pageNumber]);
 
   // ── MOBILE / SINGLE COLUMN ────────────────────────────────────
   if (!useSplitScreen) {
@@ -189,7 +318,7 @@ useEffect(() => {
   return (
     <div className="fixed inset-0 flex bg-white">
 
-      {/* LEFT: Image panel — full height, no top content */}
+      {/* LEFT: Image panel */}
       <div className="w-[45%] h-screen flex flex-col bg-slate-50 overflow-hidden relative">
         <div className="h-full flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
@@ -286,13 +415,12 @@ useEffect(() => {
       {/* RIGHT: Text panel */}
       <div className="w-[55%] h-screen flex flex-col relative">
 
-        {/* Scrollable content area */}
-<div
-  ref={scrollRef}
-  className="flex-1 overflow-y-auto px-12 flex flex-col"
-  style={{ paddingBottom: '160px' }}
->
-  <div className="max-w-2xl mx-auto w-full" style={{ marginTop: 'max(20vh, 60px)' }}>
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto px-12 flex flex-col"
+          style={{ paddingBottom: '160px' }}
+        >
+          <div className="max-w-2xl mx-auto w-full" style={{ marginTop: 'max(20vh, 60px)' }}>
             {page.subtitle && (
               <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
                 {page.subtitle}
@@ -326,9 +454,8 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Bottom nav bar — breadcrumb + Previous / Page X of Y / Next */}
+        {/* Bottom nav */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-8 pt-4 pb-6">
-          {/* Breadcrumb */}
           <div className="max-w-2xl mx-auto mb-2">
             <p className="text-slate-400 text-xs font-avenir">
               Chapter {chapter.number}: {chapter.title}
@@ -337,7 +464,6 @@ useEffect(() => {
               )}
             </p>
           </div>
-          {/* Navigation */}
           <div className="flex justify-between items-center max-w-2xl mx-auto">
             <button
               onClick={handlePreviousClick}
