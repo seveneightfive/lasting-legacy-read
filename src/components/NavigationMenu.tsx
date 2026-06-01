@@ -152,14 +152,19 @@ export default function NavigationMenu({
     const bookData = await fetchCompleteBookData(book.id);
     if (!bookData) throw new Error('Failed to fetch book data');
 
-    // Map to the shape pdfBookGenerator expects, filtering deleted pages
-    // and sorting by final_order ?? sort_order
+    setPdfProgress(15); // data fetched
+
     const chaptersWithPages = bookData.chapters.map((ch) => ({
       ...ch,
       pages: sortPagesForDisplay(ch.pages),
     }));
 
-    await downloadBookPDF(bookData.book, chaptersWithPages);
+    await downloadBookPDF(
+      bookData.book,
+      chaptersWithPages,
+      (pct) => setPdfProgress(pct)   // ← live progress
+    );
+
     setIsGeneratingPDF(false);
     setPdfProgress(0);
   } catch (error) {
