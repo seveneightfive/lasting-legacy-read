@@ -6,7 +6,7 @@ import RichTextEditor from './RichTextEditor';
 import GalleryEditor from './GalleryEditor';
 import { TextField, FieldLabel } from './formFields';
 import { hasWordPressMarkup, sanitizeWordPressHtml } from '../../utils/sanitizeWordPressHtml';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, LayoutGrid } from 'lucide-react';
 
 interface PageEditViewProps {
   book: Book;
@@ -20,13 +20,6 @@ interface PageEditViewProps {
   onAddToGallery: (imageUrl: string, caption?: string) => Promise<void>;
 }
 
-/**
- * Page editor — the workhorse view.
- *
- * Header is intentionally minimal here (top-bar breadcrumb carries the
- * chapter/page context). Right column is the scroll container; toolbar
- * inside the rich-text editor sticks to the top while you scroll.
- */
 export default function PageEditView({
   book, chapter, page, galleryItems, onChange, onGalleryChanged, onAddToGallery,
 }: PageEditViewProps) {
@@ -96,7 +89,42 @@ export default function PageEditView({
             placeholder="— Who said it"
           />
 
+          {/* ── Gallery section ─────────────────────────────── */}
           <div className="mt-8 pt-6 border-t border-slate-200">
+
+            {/* Gallery page toggle */}
+            <div className="flex items-center justify-between mb-6 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="flex items-center gap-2.5">
+                <LayoutGrid size={15} className="text-slate-400 shrink-0" />
+                <div>
+                  <p className="text-sm font-avenir text-slate-700 leading-tight">Gallery page</p>
+                  <p className="text-xs text-slate-400 font-avenir mt-0.5">
+                    Show all photos as a full-width grid instead of the split layout
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={page.gallery_page ?? false}
+                onClick={() => onChange({ gallery_page: !(page.gallery_page ?? false) })}
+                className={[
+                  'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent',
+                  'transition-colors duration-200 ease-in-out',
+                  'focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-1',
+                  page.gallery_page ? 'bg-slate-700' : 'bg-slate-200',
+                ].join(' ')}
+              >
+                <span
+                  className={[
+                    'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow',
+                    'transition duration-200 ease-in-out',
+                    page.gallery_page ? 'translate-x-4' : 'translate-x-0',
+                  ].join(' ')}
+                />
+              </button>
+            </div>
+
             <GalleryEditor
               pageId={page.id}
               chapterId={chapter.id}
