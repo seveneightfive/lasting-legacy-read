@@ -144,23 +144,32 @@ export default function NavigationMenu({
   };
 
   const handleDownloadPDF = async () => {
-    try {
-      setIsGeneratingPDF(true);
-      setPdfProgress(0);
-      setPdfError(null);
-      const bookData = await fetchCompleteBookData(book.id);
-      if (!bookData) throw new Error('Failed to fetch book data');
-      await generateBookPDF(bookData, (progress) => setPdfProgress(progress));
-      setIsGeneratingPDF(false);
-      setPdfProgress(0);
-    } catch (error) {
-      console.error('Error generating PDF:', error);
-      setPdfError('Failed to generate PDF. Please try again.');
-      setIsGeneratingPDF(false);
-      setPdfProgress(0);
-    }
-  };
+  try {
+    setIsGeneratingPDF(true);
+    setPdfProgress(0);
+    setPdfError(null);
 
+    const bookData = await fetchCompleteBookData(book.id);
+    if (!bookData) throw new Error('Failed to fetch book data');
+
+    // Map to the shape pdfBookGenerator expects, filtering deleted pages
+    // and sorting by final_order ?? sort_order
+    const chaptersWithPages = bookData.chapters.map((ch) => ({
+      ...ch,
+      pages: sortPagesForDisplay(ch.pages),
+    }));
+
+    await downloadBookPDF(bookData.book, chaptersWithPages);
+    setIsGeneratingPDF(false);
+    setPdfProgress(0);
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    setPdfError('Failed to generate PDF. Please try again.');
+    setIsGeneratingPDF(false);
+    setPdfProgress(0);
+  }
+};
+  
   const openPinModal = () => {
     setPin('');
     setPinError('');
