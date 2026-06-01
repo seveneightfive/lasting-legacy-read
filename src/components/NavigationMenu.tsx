@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, SquarePen as PenSquare, Download, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase, Book, Chapter, Page } from '../lib/supabase';
 import { fetchCompleteBookData } from '../utils/bookDataFetcher';
-import { generateBookPDF } from '../utils/pdfBookGenerator';
+import { downloadBookPDF } from '../utils/pdfBookGenerator';
 import { sortPagesForDisplay } from '../utils/pageOrder';
 
 const EDGE_FN    = 'https://uhzncrsbytxwdlmldwqf.supabase.co/functions/v1/story-editor';
