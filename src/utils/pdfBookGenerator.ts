@@ -1,719 +1,652 @@
 import jsPDF from 'jspdf';
-import { marked } from 'marked';
-import { BookWithFullData, ChapterWithFullData, loadImageAsBase64, getImageDimensions } from './bookDataFetcher';
+import { Book } from '../lib/supabase';
+import { ChapterWithPages } from '../lib/pdfUtils';
 
-const SITE_ICON_URL = 'https://ompmvmjamqekwmnjwnzt.supabase.co/storage/v1/object/public/LLO%20Branding/logo.png';
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MARGIN = 25;          // mm left/right
+const TOP_MARGIN = 25;      // mm top
+const BOTTOM_MARGIN = 25;   // mm bottom
+const FONT_BODY = 11;
+const FONT_SUBHEAD = 13;
+const FONT_CHAPTER = 20;
+const FONT_CHAPTER_SUB = 14;
+const FONT_CAPTION = 9;
+const FONT_TOC_TITLE = 18;
+const FONT_TOC_ENTRY = 11;
+const LINE_SCALE = 0.45;    // jsPDF pt → mm line height multiplier for given font size
+const PARA_GAP = 4;         // mm between paragraphs
+const ORPHAN_LINES = 2;     // minimum lines to keep at bottom / top of page
 
-const PDF_CONFIG = {
-  width: 396,
-  height: 612,
-  margin: 30,
-  contentWidth: 336,
-  pageNumberBottomMargin: 20,
-  imageMaxWidth: 336,
-  galleryImagesPerRow: 2,
-  galleryImageSpacing: 10
-};
+// Lasting Legacy Online logo URL (publicly accessible)
+const LOGO_URL = 'https://lastinglegacyonline.com/wp-content/uploads/2023/01/LLO-Logo-horizontal-dark.png';
 
-const TYPOGRAPHY = {
-  bodyFont: 'helvetica',
-  titleFont: 'helvetica',
-  bodySize: 10,
-  titleSize: 21,
-  captionSize: 8,
-  bodyColor: { r: 51, g: 51, b: 51 },
-  titleColor: { r: 0, g: 0, b: 0 },
-  captionColor: { r: 80, g: 80, b: 80 },
-  whiteColor: { r: 255, g: 255, b: 255 },
-  bodyLineHeight: 1.5,
-  titleLineHeight: 1.2,
-  captionLineHeight: 1.4
-};
-
-interface PageTracker {
-  currentPage: number;
-  shouldShowPageNumber: boolean;
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface TocEntry {
+  chapterNumber: number;
+  title: string;
+  subtitle?: string;
+  pageNumber: number;
 }
 
-function stripHtmlTags(html: string): string {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || '';
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseMarkdownToText(markdown: string): string {
-  const html = marked.parse(markdown) as string;
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-
-  const paragraphs: string[] = [];
-  const pElements = tmp.querySelectorAll('p');
-  pElements.forEach(p => {
-    const text = p.textContent || p.innerText || '';
-    if (text.trim()) {
-      paragraphs.push(text.trim());
-    }
-  });
-
-  return paragraphs.join('\n\n');
-}
-
-function addPageNumber(pdf: jsPDF, pageNum: number) {
-  pdf.setFontSize(TYPOGRAPHY.captionSize);
-  pdf.setTextColor(100, 100, 100);
-  pdf.text(
-    pageNum.toString(),
-    PDF_CONFIG.width / 2,
-    PDF_CONFIG.height - PDF_CONFIG.pageNumberBottomMargin,
-    { align: 'center' }
-  );
-  pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-}
-
-function wrapText(pdf: jsPDF, text: string, maxWidth: number): string[] {
-  return pdf.splitTextToSize(text, maxWidth);
-}
-
-function calculateImageDimensions(
-  originalWidth: number,
-  originalHeight: number,
-  maxWidth: number,
-  maxHeight: number
-): { width: number; height: number } {
-  let width = originalWidth;
-  let height = originalHeight;
-
-  if (width > maxWidth) {
-    height = (maxWidth / width) * height;
-    width = maxWidth;
-  }
-
-  if (height > maxHeight) {
-    width = (maxHeight / height) * width;
-    height = maxHeight;
-  }
-
-  return { width, height };
-}
-
-async function addCoverPage(
-  pdf: jsPDF,
-  bookData: BookWithFullData,
-  tracker: PageTracker
-): Promise<void> {
+/** Load an image URL and return a base64 data URL, or null on failure */
+async function loadImageAsBase64(url: string): Promise<{ data: string; format: string } | null> {
+  if (!url) return null;
   try {
-    if (bookData.book.image_url) {
-      const coverImage = await loadImageAsBase64(bookData.book.image_url);
-      const imgDimensions = await getImageDimensions(bookData.book.image_url);
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const mimeType = blob.type || 'image/jpeg';
+    const format = mimeType.includes('png') ? 'PNG' : 'JPEG';
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve({ data: base64, format });
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
 
-      const scale = Math.max(
-        PDF_CONFIG.width / imgDimensions.width,
-        PDF_CONFIG.height / imgDimensions.height
-      );
-      const scaledWidth = imgDimensions.width * scale;
-      const scaledHeight = imgDimensions.height * scale;
-      const x = (PDF_CONFIG.width - scaledWidth) / 2;
-      const y = (PDF_CONFIG.height - scaledHeight) / 2;
+/** Get natural image dimensions from a base64 string */
+async function getImageDimensions(base64: string, format: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+    img.onerror = () => resolve({ w: 800, h: 600 });
+    img.src = `data:image/${format.toLowerCase()};base64,${base64}`;
+  });
+}
 
-      pdf.addImage(coverImage, 'JPEG', x, y, scaledWidth, scaledHeight);
+/** Strip HTML tags to plain text, preserving paragraph breaks */
+function htmlToPlainText(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
-      pdf.setFillColor(0, 0, 0);
-      pdf.setGState(pdf.GState({ opacity: 0.5 }));
-      pdf.rect(0, 0, PDF_CONFIG.width, PDF_CONFIG.height, 'F');
-      pdf.setGState(pdf.GState({ opacity: 1.0 }));
+/** Extract inline images from HTML content */
+function extractInlineImages(html: string): Array<{ src: string; alt: string; caption: string }> {
+  if (!html) return [];
+  const images: Array<{ src: string; alt: string; caption: string }> = [];
+  const figureRe = /<figure[^>]*>([\s\S]*?)<\/figure>/gi;
+  let figMatch;
+  while ((figMatch = figureRe.exec(html)) !== null) {
+    const inner = figMatch[1];
+    const imgMatch = inner.match(/<img[^>]+src=["']([^"']+)["'][^>]*alt=["']([^"']*)["']/i)
+      || inner.match(/<img[^>]+src=["']([^"']+)["']/i);
+    const capMatch = inner.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+    if (imgMatch) {
+      images.push({
+        src: imgMatch[1],
+        alt: imgMatch[2] || '',
+        caption: capMatch ? htmlToPlainText(capMatch[1]) : '',
+      });
+    }
+  }
+  return images;
+}
+
+// ─── Main PDF class ───────────────────────────────────────────────────────────
+
+class BookPdfBuilder {
+  private pdf: jsPDF;
+  private y: number = TOP_MARGIN;
+  private pageW: number;
+  private pageH: number;
+  private contentW: number;
+  private tocEntries: TocEntry[] = [];
+
+  constructor() {
+    this.pdf = new jsPDF({ unit: 'mm', format: 'letter' });
+    this.pageW = this.pdf.internal.pageSize.getWidth();
+    this.pageH = this.pdf.internal.pageSize.getHeight();
+    this.contentW = this.pageW - MARGIN * 2;
+  }
+
+  // ── Page management ────────────────────────────────────────────────────────
+
+  get currentPage() {
+    return (this.pdf.internal as any).getCurrentPageInfo().pageNumber;
+  }
+
+  private newPage() {
+    this.pdf.addPage();
+    this.y = TOP_MARGIN;
+  }
+
+  private remainingHeight() {
+    return this.pageH - BOTTOM_MARGIN - this.y;
+  }
+
+  /** Returns the height in mm a block of lines at given fontSize would need */
+  private blockHeight(lineCount: number, fontSize: number) {
+    return lineCount * fontSize * LINE_SCALE + PARA_GAP;
+  }
+
+  /** Set font helper */
+  private font(size: number, style: 'normal' | 'bold' | 'italic' | 'bolditalic' = 'normal') {
+    this.pdf.setFontSize(size);
+    this.pdf.setFont('times', style);
+  }
+
+  // ── Text rendering ─────────────────────────────────────────────────────────
+
+  /**
+   * Add wrapped text with orphan/widow prevention.
+   * Returns the y position after the block.
+   */
+  private addText(
+    text: string,
+    fontSize: number,
+    style: 'normal' | 'bold' | 'italic' | 'bolditalic' = 'normal',
+    opts: { center?: boolean; indent?: number; gapAfter?: number } = {}
+  ) {
+    if (!text?.trim()) return;
+    this.font(fontSize, style);
+    const x = MARGIN + (opts.indent || 0);
+    const w = this.contentW - (opts.indent || 0);
+    const lines = this.pdf.splitTextToSize(text.trim(), w) as string[];
+    const lineH = fontSize * LINE_SCALE;
+    const gapAfter = opts.gapAfter ?? PARA_GAP;
+
+    // Orphan prevention: if fewer than ORPHAN_LINES lines fit, push to next page
+    const remaining = this.remainingHeight();
+    const fitsCount = Math.floor(remaining / lineH);
+
+    if (lines.length <= ORPHAN_LINES || fitsCount < ORPHAN_LINES) {
+      // Entire small block or start of block — push to new page if it won't fit
+      if (fitsCount < Math.min(ORPHAN_LINES, lines.length)) {
+        this.newPage();
+      }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      if (this.y + lineH > this.pageH - BOTTOM_MARGIN) {
+        // About to break — check widow: if only 1 line remains after break, push it back
+        const linesLeft = lines.length - i;
+        if (linesLeft <= ORPHAN_LINES && i > 0) {
+          // Back up ORPHAN_LINES lines to the previous page
+          // (simplification: just start a new page here, all remaining lines go together)
+        }
+        this.newPage();
+      }
+      const xPos = opts.center ? this.pageW / 2 : x;
+      this.pdf.text(lines[i], xPos, this.y, opts.center ? { align: 'center' } : {});
+      this.y += lineH;
+    }
+    this.y += gapAfter;
+  }
+
+  /** Add a horizontal rule */
+  private addRule(thickness = 0.3) {
+    this.pdf.setLineWidth(thickness);
+    this.pdf.setDrawColor(180, 180, 180);
+    this.pdf.line(MARGIN, this.y, this.pageW - MARGIN, this.y);
+    this.y += 4;
+  }
+
+  // ── Image rendering ────────────────────────────────────────────────────────
+
+  /**
+   * Add an image, scaled to fit the available width (or the full page for featured images).
+   * full=true → image fills the page (with margins), centered vertically.
+   */
+  private async addImage(
+    imgData: { data: string; format: string },
+    caption: string,
+    opts: { full?: boolean; maxHeightMm?: number } = {}
+  ) {
+    const dims = await getImageDimensions(imgData.data, imgData.format);
+    const aspect = dims.w / dims.h;
+
+    if (opts.full) {
+      // Full-page image
+      this.newPage();
+      const maxW = this.contentW;
+      const maxH = this.pageH - TOP_MARGIN - BOTTOM_MARGIN - (caption ? 12 : 0);
+      let w = maxW;
+      let h = w / aspect;
+      if (h > maxH) { h = maxH; w = h * aspect; }
+      const x = (this.pageW - w) / 2;
+      const y = (this.pageH - h - (caption ? 10 : 0)) / 2;
+      this.pdf.addImage(imgData.data, imgData.format, x, y, w, h);
+      if (caption) {
+        this.font(FONT_CAPTION, 'italic');
+        this.pdf.text(caption, this.pageW / 2, y + h + 6, { align: 'center' });
+      }
+      this.newPage(); // content continues on next page
     } else {
-      pdf.setFillColor(30, 41, 59);
-      pdf.rect(0, 0, PDF_CONFIG.width, PDF_CONFIG.height, 'F');
-    }
+      const maxH = opts.maxHeightMm ?? 100;
+      let w = this.contentW;
+      let h = w / aspect;
+      if (h > maxH) { h = maxH; w = h * aspect; }
 
-    const titleY = PDF_CONFIG.height * 0.7;
-    pdf.setTextColor(TYPOGRAPHY.whiteColor.r, TYPOGRAPHY.whiteColor.g, TYPOGRAPHY.whiteColor.b);
-    pdf.setFontSize(32);
-    pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
+      // Check if image fits on current page
+      const needed = h + (caption ? 10 : 0) + 6;
+      if (this.remainingHeight() < needed) this.newPage();
 
-    const titleLines = wrapText(pdf, bookData.book.title, PDF_CONFIG.contentWidth);
-    let currentY = titleY;
-    titleLines.forEach(line => {
-      pdf.text(line, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-      currentY += 32 * 1.1;
-    });
+      const x = (this.pageW - w) / 2;
+      this.pdf.addImage(imgData.data, imgData.format, x, this.y, w, h);
+      this.y += h + 3;
 
-    pdf.setFontSize(18);
-    pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-    pdf.text(`by ${bookData.book.author}`, PDF_CONFIG.width / 2, currentY + 15, { align: 'center' });
-
-    pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-    tracker.currentPage = 1;
-  } catch (error) {
-    console.error('Error adding cover page:', error);
-  }
-}
-
-async function addBlankPage(pdf: jsPDF, tracker: PageTracker): Promise<void> {
-  pdf.addPage();
-  tracker.currentPage++;
-}
-
-async function addBlankPageWithIcon(pdf: jsPDF, tracker: PageTracker): Promise<void> {
-  pdf.addPage();
-  tracker.currentPage++;
-
-  try {
-    const iconImage = await loadImageAsBase64(SITE_ICON_URL);
-    const iconWidth = 80;
-    const iconHeight = 40;
-    const x = (PDF_CONFIG.width - iconWidth) / 2;
-    const y = (PDF_CONFIG.height - iconHeight) / 2;
-
-    pdf.addImage(iconImage, 'PNG', x, y, iconWidth, iconHeight);
-  } catch (error) {
-    console.error('Error adding icon to blank page:', error);
-  }
-}
-
-async function addTitlePage(pdf: jsPDF, bookData: BookWithFullData, tracker: PageTracker): Promise<void> {
-  pdf.addPage();
-  tracker.currentPage++;
-
-  const centerY = PDF_CONFIG.height / 2 - 40;
-
-  pdf.setFontSize(28);
-  pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-  pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-  const titleLines = wrapText(pdf, bookData.book.title, PDF_CONFIG.contentWidth);
-  let currentY = centerY;
-  titleLines.forEach(line => {
-    pdf.text(line, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-    currentY += 28 * 1.2;
-  });
-
-  pdf.setFontSize(14);
-  pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-  pdf.text(`by ${bookData.book.author}`, PDF_CONFIG.width / 2, currentY + 20, { align: 'center' });
-}
-
-async function addDedicationPage(
-  pdf: jsPDF,
-  bookData: BookWithFullData,
-  tracker: PageTracker
-): Promise<void> {
-  if (!bookData.book.dedication) return;
-
-  pdf.addPage();
-  tracker.currentPage++;
-
-  const dedicationText = parseMarkdownToText(bookData.book.dedication);
-  const pageStartY = PDF_CONFIG.height / 3;
-
-  pdf.setFontSize(18);
-  pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-  pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-  pdf.text('Dedication', PDF_CONFIG.width / 2, pageStartY, { align: 'center' });
-
-  pdf.setFontSize(TYPOGRAPHY.bodySize);
-  pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-  pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-
-  const paragraphs = dedicationText.split('\n\n');
-  let y = pageStartY + 35;
-
-  paragraphs.forEach(paragraph => {
-    const lines = wrapText(pdf, paragraph, PDF_CONFIG.contentWidth - 40);
-    lines.forEach(line => {
-      pdf.text(line, PDF_CONFIG.width / 2, y, { align: 'center' });
-      y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-    });
-    y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-  });
-}
-
-async function addIntroPage(
-  pdf: jsPDF,
-  bookData: BookWithFullData,
-  tracker: PageTracker
-): Promise<void> {
-  if (!bookData.book.intro) return;
-
-  pdf.addPage();
-  tracker.currentPage++;
-  tracker.shouldShowPageNumber = true;
-
-  const introText = parseMarkdownToText(bookData.book.intro);
-  const pageStartY = PDF_CONFIG.height / 3;
-
-  pdf.setFontSize(18);
-  pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-  pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-  pdf.text('Introduction', PDF_CONFIG.width / 2, pageStartY, { align: 'center' });
-
-  pdf.setFontSize(TYPOGRAPHY.bodySize);
-  pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-  pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-
-  const paragraphs = introText.split('\n\n');
-  let y = pageStartY + 35;
-
-  paragraphs.forEach(paragraph => {
-    const lines = wrapText(pdf, paragraph, PDF_CONFIG.contentWidth);
-    lines.forEach(line => {
-      if (y > PDF_CONFIG.height - 60) {
-        addPageNumber(pdf, tracker.currentPage);
-        pdf.addPage();
-        tracker.currentPage++;
-        y = PDF_CONFIG.margin;
-        pdf.setFontSize(TYPOGRAPHY.bodySize);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-        pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
+      if (caption) {
+        this.font(FONT_CAPTION, 'italic');
+        this.pdf.text(caption, this.pageW / 2, this.y, { align: 'center' });
+        this.y += FONT_CAPTION * LINE_SCALE + 2;
       }
-      pdf.text(line, PDF_CONFIG.margin, y);
-      y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-    });
-    y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-  });
-
-  addPageNumber(pdf, tracker.currentPage);
-}
-
-async function ensureOddPage(pdf: jsPDF, tracker: PageTracker): Promise<void> {
-  if (tracker.currentPage % 2 === 0) {
-    await addBlankPageWithIcon(pdf, tracker);
+      this.y += PARA_GAP;
+    }
   }
-}
 
-async function addChapterTitlePage(
-  pdf: jsPDF,
-  chapter: ChapterWithFullData,
-  tracker: PageTracker
-): Promise<void> {
-  await ensureOddPage(pdf, tracker);
+  // ── Section builders ───────────────────────────────────────────────────────
 
-  pdf.addPage();
-  tracker.currentPage++;
-
-  if (chapter.image_url) {
-    try {
-      const chapterImage = await loadImageAsBase64(chapter.image_url);
-      const imgDimensions = await getImageDimensions(chapter.image_url);
-
-      const scale = Math.max(
-        PDF_CONFIG.width / imgDimensions.width,
-        PDF_CONFIG.height / imgDimensions.height
+  private buildTitlePage(book: Book, coverImg: { data: string; format: string } | null) {
+    if (coverImg) {
+      // Full bleed cover image
+      const dims_sync = { w: 1, h: 1 }; // will be overridden async — handled before call
+      this.pdf.addImage(
+        coverImg.data,
+        coverImg.format,
+        0, 0,
+        this.pageW, this.pageH
       );
-      const scaledWidth = imgDimensions.width * scale;
-      const scaledHeight = imgDimensions.height * scale;
-      const x = (PDF_CONFIG.width - scaledWidth) / 2;
-      const y = (PDF_CONFIG.height - scaledHeight) / 2;
-
-      pdf.addImage(chapterImage, 'JPEG', x, y, scaledWidth, scaledHeight);
-
-      pdf.setGState(pdf.GState({ opacity: 0.4 }));
-      pdf.setFillColor(0, 0, 0);
-      pdf.rect(0, 0, PDF_CONFIG.width, PDF_CONFIG.height, 'F');
-      pdf.setGState(pdf.GState({ opacity: 1.0 }));
-
-      const textStartY = PDF_CONFIG.height * 0.65;
-      let currentY = textStartY;
-
-      pdf.setTextColor(TYPOGRAPHY.whiteColor.r, TYPOGRAPHY.whiteColor.g, TYPOGRAPHY.whiteColor.b);
-      pdf.setFontSize(14);
-      pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-      pdf.text(`Chapter ${chapter.number}`, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-      currentY += 20;
-
-      pdf.setFontSize(TYPOGRAPHY.titleSize);
-      pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-      const titleLines = wrapText(pdf, chapter.title, PDF_CONFIG.contentWidth - 40);
-      titleLines.forEach(line => {
-        pdf.text(line, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-        currentY += TYPOGRAPHY.titleSize * TYPOGRAPHY.titleLineHeight;
-      });
-
-      if (chapter.lede) {
-        currentY += 15;
-        pdf.setFontSize(12);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'italic');
-        const ledeLines = wrapText(pdf, chapter.lede, PDF_CONFIG.contentWidth - 60);
-        ledeLines.forEach(line => {
-          pdf.text(line, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-          currentY += 12 * 1.4;
-        });
-      }
-    } catch (error) {
-      console.error('Error adding chapter image:', error);
-      addChapterTitlePageWithoutImage(pdf, chapter);
-    }
-  } else {
-    addChapterTitlePageWithoutImage(pdf, chapter);
-  }
-
-  pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-}
-
-function addChapterTitlePageWithoutImage(pdf: jsPDF, chapter: ChapterWithFullData): void {
-  const currentY = PDF_CONFIG.height * 0.4;
-
-  pdf.setFontSize(14);
-  pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-  pdf.setTextColor(100, 100, 100);
-  pdf.text(`Chapter ${chapter.number}`, PDF_CONFIG.width / 2, currentY, { align: 'center' });
-
-  pdf.setFontSize(TYPOGRAPHY.titleSize);
-  pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-  pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-  const titleLines = wrapText(pdf, chapter.title, PDF_CONFIG.contentWidth);
-  let textY = currentY + 25;
-  titleLines.forEach(line => {
-    pdf.text(line, PDF_CONFIG.width / 2, textY, { align: 'center' });
-    textY += TYPOGRAPHY.titleSize * TYPOGRAPHY.titleLineHeight;
-  });
-
-  if (chapter.lede) {
-    textY += 15;
-    pdf.setFontSize(12);
-    pdf.setFont(TYPOGRAPHY.bodyFont, 'italic');
-    pdf.setTextColor(60, 60, 60);
-    const ledeLines = wrapText(pdf, chapter.lede, PDF_CONFIG.contentWidth - 40);
-    ledeLines.forEach(line => {
-      pdf.text(line, PDF_CONFIG.width / 2, textY, { align: 'center' });
-      textY += 12 * 1.4;
-    });
-  }
-}
-
-async function addChapterContent(
-  pdf: jsPDF,
-  chapter: ChapterWithFullData,
-  tracker: PageTracker
-): Promise<void> {
-  for (const page of chapter.pages) {
-    pdf.addPage();
-    tracker.currentPage++;
-    const pageStartY = PDF_CONFIG.height / 3;
-    let y = pageStartY;
-
-    if (page.image_url && page.image_caption) {
-      try {
-        const pageImage = await loadImageAsBase64(page.image_url);
-        const imgDimensions = await getImageDimensions(page.image_url);
-
-        const maxHeight = PDF_CONFIG.height - pageStartY - 100;
-        const dims = calculateImageDimensions(
-          imgDimensions.width,
-          imgDimensions.height,
-          PDF_CONFIG.imageMaxWidth,
-          maxHeight
-        );
-
-        const x = (PDF_CONFIG.width - dims.width) / 2;
-        pdf.addImage(pageImage, 'JPEG', x, y, dims.width, dims.height);
-        y += dims.height + 12;
-
-        pdf.setFontSize(TYPOGRAPHY.captionSize);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'italic');
-        pdf.setTextColor(TYPOGRAPHY.captionColor.r, TYPOGRAPHY.captionColor.g, TYPOGRAPHY.captionColor.b);
-        const captionLines = wrapText(pdf, page.image_caption, PDF_CONFIG.contentWidth);
-        captionLines.forEach(line => {
-          pdf.text(line, PDF_CONFIG.width / 2, y, { align: 'center' });
-          y += TYPOGRAPHY.captionSize * TYPOGRAPHY.captionLineHeight;
-        });
-        pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-
-        addPageNumber(pdf, tracker.currentPage);
-
-        pdf.addPage();
-        tracker.currentPage++;
-        y = pageStartY;
-      } catch (error) {
-        console.error('Error adding page image:', error);
-      }
+      // Semi-transparent white overlay at bottom for title text
+      this.pdf.setFillColor(255, 255, 255);
+      this.pdf.setGState(new (this.pdf as any).GState({ opacity: 0.75 }));
+      this.pdf.rect(0, this.pageH * 0.65, this.pageW, this.pageH * 0.35, 'F');
+      this.pdf.setGState(new (this.pdf as any).GState({ opacity: 1 }));
     }
 
-    if (page.subtitle) {
-      pdf.setFontSize(16);
-      pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-      pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-      const subtitleLines = wrapText(pdf, page.subtitle, PDF_CONFIG.contentWidth);
-      subtitleLines.forEach(line => {
-        if (y > PDF_CONFIG.height - 60) {
-          addPageNumber(pdf, tracker.currentPage);
-          pdf.addPage();
-          tracker.currentPage++;
-          y = PDF_CONFIG.margin;
-          pdf.setFontSize(16);
-          pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-          pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-        }
-        pdf.text(line, PDF_CONFIG.margin, y);
-        y += 16 * 1.3;
-      });
-      y += 8;
-    }
-
-    if (page.quote) {
-      const quoteText = parseMarkdownToText(page.quote);
-      const paragraphs = quoteText.split('\n\n');
-
-      paragraphs.forEach(paragraph => {
-        pdf.setFontSize(TYPOGRAPHY.bodySize);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'italic');
-        pdf.setTextColor(60, 60, 60);
-        const quoteLines = wrapText(pdf, paragraph, PDF_CONFIG.contentWidth - 20);
-        quoteLines.forEach(line => {
-          if (y > PDF_CONFIG.height - 60) {
-            addPageNumber(pdf, tracker.currentPage);
-            pdf.addPage();
-            tracker.currentPage++;
-            y = PDF_CONFIG.margin;
-            pdf.setFontSize(TYPOGRAPHY.bodySize);
-            pdf.setFont(TYPOGRAPHY.bodyFont, 'italic');
-            pdf.setTextColor(60, 60, 60);
-          }
-          pdf.text(line, PDF_CONFIG.margin + 10, y);
-          y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-        });
-        y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-      });
-
-      if (page.quote_attribute) {
-        if (y > PDF_CONFIG.height - 60) {
-          addPageNumber(pdf, tracker.currentPage);
-          pdf.addPage();
-          tracker.currentPage++;
-          y = PDF_CONFIG.margin;
-        }
-        pdf.setFontSize(TYPOGRAPHY.bodySize);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-        pdf.setTextColor(60, 60, 60);
-        pdf.text(`— ${page.quote_attribute}`, PDF_CONFIG.margin + 10, y);
-        y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight + 5;
-      }
-      pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-      y += 8;
-    }
-
-    if (page.content) {
-      const contentText = parseMarkdownToText(page.content);
-      const paragraphs = contentText.split('\n\n');
-
-      paragraphs.forEach(paragraph => {
-        pdf.setFontSize(TYPOGRAPHY.bodySize);
-        pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-        pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-        const contentLines = wrapText(pdf, paragraph, PDF_CONFIG.contentWidth);
-        contentLines.forEach(line => {
-          if (y > PDF_CONFIG.height - 60) {
-            addPageNumber(pdf, tracker.currentPage);
-            pdf.addPage();
-            tracker.currentPage++;
-            y = PDF_CONFIG.margin;
-            pdf.setFontSize(TYPOGRAPHY.bodySize);
-            pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-            pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-          }
-          pdf.text(line, PDF_CONFIG.margin, y);
-          y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-        });
-        y += TYPOGRAPHY.bodySize * TYPOGRAPHY.bodyLineHeight;
-      });
-    }
-
-    addPageNumber(pdf, tracker.currentPage);
-  }
-}
-
-async function addChapterGallery(
-  pdf: jsPDF,
-  chapter: ChapterWithFullData,
-  tracker: PageTracker
-): Promise<void> {
-  if (!chapter.galleryItems || chapter.galleryItems.length === 0) return;
-
-  const imagesPerPage = 6;
-  const imageSpacing = 8;
-  const imagesPerRow = 2;
-  const captionSectionHeight = 80;
-  const availableHeightForImages = PDF_CONFIG.height - PDF_CONFIG.margin * 2 - captionSectionHeight;
-  const imageWidth = (PDF_CONFIG.contentWidth - imageSpacing) / imagesPerRow;
-
-  for (let i = 0; i < chapter.galleryItems.length; i += imagesPerPage) {
-    pdf.addPage();
-    tracker.currentPage++;
-
-    const pageImages = chapter.galleryItems.slice(i, i + imagesPerPage);
-    const imageData: Array<{ item: any; dims: { width: number; height: number }; x: number; y: number }> = [];
-
-    let currentX = PDF_CONFIG.margin;
-    let currentY = PDF_CONFIG.margin;
-    let maxHeightInRow = 0;
-    let imagesInCurrentRow = 0;
-
-    for (const item of pageImages) {
-      try {
-        const galleryImage = await loadImageAsBase64(item.image_url);
-        const imgDimensions = await getImageDimensions(item.image_url);
-
-        const maxImageHeight = availableHeightForImages / Math.ceil(imagesPerPage / imagesPerRow) - imageSpacing;
-        const dims = calculateImageDimensions(
-          imgDimensions.width,
-          imgDimensions.height,
-          imageWidth,
-          maxImageHeight
-        );
-
-        imageData.push({
-          item,
-          dims,
-          x: currentX + (imageWidth - dims.width) / 2,
-          y: currentY
-        });
-
-        maxHeightInRow = Math.max(maxHeightInRow, dims.height);
-        imagesInCurrentRow++;
-
-        if (imagesInCurrentRow >= imagesPerRow) {
-          currentX = PDF_CONFIG.margin;
-          currentY += maxHeightInRow + imageSpacing;
-          maxHeightInRow = 0;
-          imagesInCurrentRow = 0;
-        } else {
-          currentX += imageWidth + imageSpacing;
-        }
-      } catch (error) {
-        console.error('Error loading gallery image:', error);
-      }
-    }
-
-    for (const imgData of imageData) {
-      try {
-        const galleryImage = await loadImageAsBase64(imgData.item.image_url);
-        pdf.addImage(galleryImage, 'JPEG', imgData.x, imgData.y, imgData.dims.width, imgData.dims.height);
-      } catch (error) {
-        console.error('Error adding gallery image:', error);
-      }
-    }
-
-    const captionsStartY = PDF_CONFIG.height - captionSectionHeight + 10;
-    let captionY = captionsStartY;
-    let captionNumber = i + 1;
-
-    pdf.setFontSize(TYPOGRAPHY.captionSize);
-    pdf.setFont(TYPOGRAPHY.bodyFont, 'normal');
-    pdf.setTextColor(TYPOGRAPHY.captionColor.r, TYPOGRAPHY.captionColor.g, TYPOGRAPHY.captionColor.b);
-
-    for (const imgData of imageData) {
-      const item = imgData.item;
-      if (item.image_caption || item.image_title) {
-        const caption = item.image_title
-          ? `${captionNumber}. ${item.image_title}${item.image_caption ? ': ' + item.image_caption : ''}`
-          : `${captionNumber}. ${item.image_caption || ''}`;
-
-        const captionLines = wrapText(pdf, caption, PDF_CONFIG.contentWidth);
-        captionLines.forEach(line => {
-          if (captionY > PDF_CONFIG.height - 25) {
-            return;
-          }
-          pdf.text(line, PDF_CONFIG.margin, captionY);
-          captionY += TYPOGRAPHY.captionSize * TYPOGRAPHY.captionLineHeight;
-        });
-        captionY += 2;
-      }
-      captionNumber++;
-    }
-
-    pdf.setTextColor(TYPOGRAPHY.bodyColor.r, TYPOGRAPHY.bodyColor.g, TYPOGRAPHY.bodyColor.b);
-    addPageNumber(pdf, tracker.currentPage);
-  }
-}
-
-async function addThankYouPage(pdf: jsPDF, tracker: PageTracker): Promise<void> {
-  pdf.addPage();
-  tracker.currentPage++;
-
-  const centerY = PDF_CONFIG.height / 2 - 60;
-
-  try {
-    const logoImage = await loadImageAsBase64(SITE_ICON_URL);
-    const logoWidth = 120;
-    const logoHeight = 60;
-    const x = (PDF_CONFIG.width - logoWidth) / 2;
-    pdf.addImage(logoImage, 'PNG', x, centerY - 80, logoWidth, logoHeight);
-  } catch (error) {
-    console.error('Error adding logo to thank you page:', error);
-  }
-
-  pdf.setFontSize(18);
-  pdf.setFont(TYPOGRAPHY.titleFont, 'bold');
-  pdf.setTextColor(TYPOGRAPHY.titleColor.r, TYPOGRAPHY.titleColor.g, TYPOGRAPHY.titleColor.b);
-  let y = centerY;
-
-  const thankYouText = 'Thank you for reading my\nLasting Legacy Online Story';
-  const lines = thankYouText.split('\n');
-  lines.forEach(line => {
-    pdf.text(line, PDF_CONFIG.width / 2, y, { align: 'center' });
-    y += 18 * 1.3;
-  });
-}
-
-export async function generateBookPDF(bookData: BookWithFullData, onProgress?: (progress: number) => void): Promise<void> {
-  try {
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'pt',
-      format: [PDF_CONFIG.width, PDF_CONFIG.height]
+    // Title
+    this.font(32, 'bold');
+    this.pdf.setTextColor(20, 20, 20);
+    const titleLines = this.pdf.splitTextToSize(book.title, this.contentW) as string[];
+    let ty = coverImg ? this.pageH * 0.72 : this.pageH * 0.38;
+    titleLines.forEach((line) => {
+      this.pdf.text(line, this.pageW / 2, ty, { align: 'center' });
+      ty += 32 * LINE_SCALE + 2;
     });
 
-    const tracker: PageTracker = {
-      currentPage: 0,
-      shouldShowPageNumber: false
-    };
+    // Author — smaller, 12pt
+    this.font(12, 'normal');
+    this.pdf.text(`by ${book.author}`, this.pageW / 2, ty + 8, { align: 'center' });
+  }
 
-    const totalSteps = 5 + bookData.chapters.length * 3;
-    let currentStep = 0;
+  private buildDedication(book: Book) {
+    if (!book.dedication) return;
+    this.newPage();
+    this.y = this.pageH * 0.3;
+    this.addText('Dedication', FONT_SUBHEAD + 2, 'bolditalic', { center: true, gapAfter: 10 });
+    this.addRule();
+    this.addText(book.dedication, FONT_BODY, 'italic', { center: true });
+  }
 
-    const updateProgress = () => {
-      currentStep++;
-      if (onProgress) {
-        onProgress(Math.round((currentStep / totalSteps) * 100));
+  private buildIntro(book: Book) {
+    if (!book.intro) return;
+    this.newPage();
+    this.addText('Introduction', FONT_CHAPTER_SUB + 2, 'bold', { gapAfter: 6 });
+    this.addRule();
+    const plain = htmlToPlainText(book.intro);
+    plain.split('\n\n').forEach((para) => {
+      if (para.trim()) this.addText(para, FONT_BODY, 'normal', { gapAfter: PARA_GAP });
+    });
+  }
+
+  private async buildTableOfContents() {
+    if (this.tocEntries.length === 0) return;
+    this.newPage();
+    this.addText('Table of Contents', FONT_TOC_TITLE, 'bold', { center: true, gapAfter: 8 });
+    this.addRule(0.5);
+    this.y += 2;
+
+    for (const entry of this.tocEntries) {
+      this.font(FONT_TOC_ENTRY, 'bold');
+      const label = `Chapter ${entry.chapterNumber}: ${entry.title}`;
+      const pageStr = `${entry.pageNumber}`;
+
+      // Leader dots
+      const labelW = this.pdf.getTextWidth(label);
+      const pageW = this.pdf.getTextWidth(pageStr);
+      const dotsW = this.contentW - labelW - pageW - 4;
+      const dotStr = '.'.repeat(Math.max(3, Math.floor(dotsW / this.pdf.getTextWidth('.'))));
+
+      if (this.remainingHeight() < FONT_TOC_ENTRY * LINE_SCALE * 3) this.newPage();
+
+      this.pdf.text(label, MARGIN, this.y);
+      this.font(FONT_TOC_ENTRY, 'normal');
+      this.pdf.text(dotStr, MARGIN + labelW + 2, this.y);
+      this.font(FONT_TOC_ENTRY, 'bold');
+      this.pdf.text(pageStr, this.pageW - MARGIN, this.y, { align: 'right' });
+      this.y += FONT_TOC_ENTRY * LINE_SCALE + 2;
+
+      if (entry.subtitle) {
+        this.font(FONT_TOC_ENTRY - 1, 'italic');
+        this.pdf.text(entry.subtitle, MARGIN + 6, this.y);
+        this.y += (FONT_TOC_ENTRY - 1) * LINE_SCALE + 1;
       }
-    };
+      this.y += 1;
+    }
+  }
 
-    await addCoverPage(pdf, bookData, tracker);
-    updateProgress();
+  private buildChapterTitlePage(
+    chapter: { chapter_number: number; title: string; lede?: string | null },
+    chapterImgData: { data: string; format: string } | null
+  ) {
+    this.newPage();
+    const pageNum = this.currentPage;
 
-    await addBlankPage(pdf, tracker);
-    updateProgress();
-
-    await addTitlePage(pdf, bookData, tracker);
-    updateProgress();
-
-    await addBlankPage(pdf, tracker);
-    updateProgress();
-
-    await addDedicationPage(pdf, bookData, tracker);
-    updateProgress();
-
-    await addIntroPage(pdf, bookData, tracker);
-    updateProgress();
-
-    for (const chapter of bookData.chapters) {
-      await addChapterTitlePage(pdf, chapter, tracker);
-      updateProgress();
-
-      await addChapterContent(pdf, chapter, tracker);
-      updateProgress();
-
-      await addChapterGallery(pdf, chapter, tracker);
-      updateProgress();
+    if (chapterImgData) {
+      // Image as chapter header, fills top ~55% of page
+      const maxH = this.pageH * 0.55;
+      const aspect_placeholder = 1.5; // will be corrected below — but we already loaded it
+      this.pdf.addImage(chapterImgData.data, chapterImgData.format, 0, 0, this.pageW, maxH);
+      this.y = maxH + 12;
+    } else {
+      this.y = this.pageH * 0.38;
     }
 
-    await addThankYouPage(pdf, tracker);
-    updateProgress();
+    this.font(12, 'normal');
+    this.pdf.setTextColor(100, 100, 100);
+    this.pdf.text(`Chapter ${chapter.chapter_number}`, this.pageW / 2, this.y, { align: 'center' });
+    this.y += 12 * LINE_SCALE + 4;
 
-    const fileName = `${bookData.book.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
-    pdf.save(fileName);
+    this.font(FONT_CHAPTER, 'bold');
+    this.pdf.setTextColor(20, 20, 20);
+    this.pdf.text(chapter.title, this.pageW / 2, this.y, { align: 'center' });
+    this.y += FONT_CHAPTER * LINE_SCALE + 6;
 
+    if (chapter.lede) {
+      this.font(FONT_CHAPTER_SUB, 'italic');
+      this.pdf.setTextColor(60, 60, 60);
+      this.pdf.text(chapter.lede, this.pageW / 2, this.y, { align: 'center' });
+    }
+
+    this.pdf.setTextColor(20, 20, 20);
+    return pageNum;
+  }
+
+  private async buildGalleryPage(
+    images: Array<{ src: string; caption?: string }>,
+    title?: string
+  ) {
+    this.newPage();
+
+    if (title) {
+      this.addText(title, FONT_SUBHEAD + 1, 'bold', { gapAfter: 4 });
+      this.addRule();
+    }
+
+    // Load all images first
+    const loaded = await Promise.all(
+      images.map(async (img) => ({
+        imgData: await loadImageAsBase64(img.src),
+        caption: img.caption || '',
+      }))
+    );
+
+    // Lay out in a 2-column grid
+    const colW = (this.contentW - 6) / 2;
+    const rowH = 60; // mm per row
+    let col = 0;
+    let rowStart = this.y;
+
+    for (let i = 0; i < loaded.length; i++) {
+      if (col === 0) {
+        if (this.remainingHeight() < rowH + 12) this.newPage();
+        rowStart = this.y;
+      }
+      const x = MARGIN + col * (colW + 6);
+
+      if (loaded[i].imgData) {
+        this.pdf.addImage(
+          loaded[i].imgData!.data,
+          loaded[i].imgData!.format,
+          x,
+          rowStart,
+          colW,
+          rowH
+        );
+        if (loaded[i].caption) {
+          this.font(FONT_CAPTION, 'italic');
+          const capLines = this.pdf.splitTextToSize(loaded[i].caption, colW) as string[];
+          let cy = rowStart + rowH + 3;
+          capLines.forEach((cl) => {
+            this.pdf.text(cl, x + colW / 2, cy, { align: 'center' });
+            cy += FONT_CAPTION * LINE_SCALE + 1;
+          });
+        }
+      } else {
+        // Placeholder box
+        this.pdf.setDrawColor(200, 200, 200);
+        this.pdf.rect(x, rowStart, colW, rowH);
+        if (loaded[i].caption) {
+          this.font(FONT_CAPTION, 'italic');
+          this.pdf.text(loaded[i].caption, x + colW / 2, rowStart + rowH + 5, { align: 'center' });
+        }
+      }
+
+      col++;
+      if (col === 2) {
+        col = 0;
+        this.y = rowStart + rowH + 16; // move below row + caption space
+      }
+    }
+    if (col !== 0) {
+      this.y = rowStart + rowH + 16;
+    }
+  }
+
+  private async buildLogoPage() {
+    this.newPage();
+    const logoImg = await loadImageAsBase64(LOGO_URL);
+    this.y = this.pageH * 0.4;
+
+    if (logoImg) {
+      const dims = await getImageDimensions(logoImg.data, logoImg.format);
+      const maxW = 80;
+      const w = Math.min(maxW, this.contentW);
+      const h = w / (dims.w / dims.h);
+      this.pdf.addImage(logoImg.data, logoImg.format, (this.pageW - w) / 2, this.y, w, h);
+      this.y += h + 8;
+    }
+
+    this.font(10, 'italic');
+    this.pdf.setTextColor(100, 100, 100);
+    this.pdf.text('Created with Lasting Legacy Online', this.pageW / 2, this.y, { align: 'center' });
+    this.pdf.setTextColor(20, 20, 20);
+  }
+
+  // ── Main build ─────────────────────────────────────────────────────────────
+
+  async build(book: Book, chaptersWithPages: ChapterWithPages[]): Promise<void> {
+    // Pre-load cover image
+    const coverImg = book.image_url ? await loadImageAsBase64(book.image_url) : null;
+
+    // ── Page 1: Title ──────────────────────────────────────────────────────
+    this.buildTitlePage(book, coverImg);
+
+    // ── Dedication ────────────────────────────────────────────────────────
+    this.buildDedication(book);
+
+    // ── Introduction ──────────────────────────────────────────────────────
+    this.buildIntro(book);
+
+    // ── TOC placeholder page (we'll come back) ────────────────────────────
+    // We insert TOC after we know page numbers, using jsPDF's page insert API.
+    // Strategy: record TOC page index, build rest, then write TOC text on that page.
+    this.newPage();
+    const tocPageIndex = this.currentPage; // we'll write TOC here later
+
+    // ── Chapters ──────────────────────────────────────────────────────────
+    for (const chapter of chaptersWithPages) {
+      // Pre-load chapter image
+      const chImgUrl = (chapter as any).image_url as string | undefined;
+      const chImg = chImgUrl ? await loadImageAsBase64(chImgUrl) : null;
+
+      const chapterStartPage = this.currentPage + 1;
+      this.buildChapterTitlePage(chapter, chImg);
+
+      this.tocEntries.push({
+        chapterNumber: chapter.chapter_number,
+        title: chapter.title,
+        subtitle: chapter.lede || undefined,
+        pageNumber: chapterStartPage,
+      });
+
+      if (chapter.heading) {
+        this.newPage();
+        this.addText(chapter.heading, FONT_SUBHEAD, 'bold', { gapAfter: 2 });
+        this.addRule();
+      }
+
+      if (chapter.pages) {
+        for (const page of chapter.pages) {
+          switch (page.type) {
+            // ── Subheading ─────────────────────────────────────────────
+            case 'subheading': {
+              if (page.content) {
+                this.y += 4;
+                this.addText(page.content, FONT_SUBHEAD, 'bold', { gapAfter: 2 });
+                this.addRule(0.2);
+              }
+              break;
+            }
+
+            // ── Content (rich text) ────────────────────────────────────
+            case 'content': {
+              if (page.content) {
+                // Extract and render inline images BEFORE text
+                const inlineImgs = extractInlineImages(page.content);
+                const plain = htmlToPlainText(page.content);
+
+                // Render paragraphs
+                const paragraphs = plain.split('\n\n');
+                for (const para of paragraphs) {
+                  if (!para.trim()) continue;
+                  // Bullet list detection
+                  if (para.startsWith('• ')) {
+                    const items = para.split('\n').filter(Boolean);
+                    for (const item of items) {
+                      this.addText(item, FONT_BODY, 'normal', { indent: 4, gapAfter: 1 });
+                    }
+                    this.y += 2;
+                  } else {
+                    this.addText(para, FONT_BODY, 'normal', { gapAfter: PARA_GAP });
+                  }
+                }
+
+                // Render inline images after paragraph text
+                for (const img of inlineImgs) {
+                  const imgData = await loadImageAsBase64(img.src);
+                  if (imgData) {
+                    await this.addImage(imgData, img.caption || img.alt, { maxHeightMm: 90 });
+                  }
+                }
+              }
+              break;
+            }
+
+            // ── Quote ──────────────────────────────────────────────────
+            case 'quote': {
+              if (page.content) {
+                this.y += 4;
+                // Indented quote with left bar
+                const quoteX = MARGIN + 8;
+                const quoteW = this.contentW - 16;
+                const plain = htmlToPlainText(page.content);
+                this.font(FONT_BODY, 'italic');
+                const lines = this.pdf.splitTextToSize(`"${plain}"`, quoteW) as string[];
+                const blockH = this.blockHeight(lines.length, FONT_BODY);
+                if (this.remainingHeight() < blockH + 10) this.newPage();
+
+                // Draw left bar
+                this.pdf.setDrawColor(150, 150, 150);
+                this.pdf.setLineWidth(0.8);
+                this.pdf.line(MARGIN + 2, this.y - 2, MARGIN + 2, this.y + blockH - 4);
+
+                for (const line of lines) {
+                  this.pdf.text(line, quoteX, this.y);
+                  this.y += FONT_BODY * LINE_SCALE;
+                }
+                this.y += 6;
+              }
+              break;
+            }
+
+            // ── Featured image (own page, full-size) ──────────────────
+            case 'image': {
+              const imgUrl = (page as any).image_url as string | undefined;
+              const caption = page.image_caption || '';
+              if (imgUrl) {
+                const imgData = await loadImageAsBase64(imgUrl);
+                if (imgData) {
+                  await this.addImage(imgData, caption, { full: true });
+                }
+              } else if (caption) {
+                this.addText(`[Image: ${caption}]`, FONT_CAPTION, 'italic');
+              }
+              break;
+            }
+
+            // ── Gallery page ───────────────────────────────────────────
+            case 'gallery': {
+              const galleryImages = (page as any).gallery_images as
+                Array<{ src: string; caption?: string }> | undefined;
+              const isGalleryPage = (page as any).is_gallery_page as boolean | undefined;
+              const galleryTitle = isGalleryPage ? (page.content || page.image_caption || undefined) : undefined;
+
+              if (galleryImages?.length) {
+                await this.buildGalleryPage(galleryImages, galleryTitle);
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // ── Lasting Legacy logo / colophon page ───────────────────────────────
+    await this.buildLogoPage();
+
+    // ── Now go back and write the TOC ─────────────────────────────────────
+    // Switch to the reserved TOC page and write it
+    this.pdf.setPage(tocPageIndex);
+    this.y = TOP_MARGIN;
+    await this.buildTableOfContents();
+  }
+
+  save(filename: string) {
+    this.pdf.save(filename);
+  }
+}
+
+// ─── Public export ────────────────────────────────────────────────────────────
+
+export async function downloadBookPDF(book: Book, chaptersWithPages: ChapterWithPages[]) {
+  try {
+    const builder = new BookPdfBuilder();
+    await builder.build(book, chaptersWithPages);
+    builder.save(`${book.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
   } catch (error) {
     console.error('Error generating PDF:', error);
-    throw error;
+    throw new Error('Failed to generate PDF');
   }
 }
