@@ -650,3 +650,6 @@ export async function downloadBookPDF(book: Book, chaptersWithPages: ChapterWith
     throw new Error('Failed to generate PDF');
   }
 }
+
+// Alias for backwards compatibility
+export const generateBookPDF = downloadBookPDF;
