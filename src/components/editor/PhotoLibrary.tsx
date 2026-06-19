@@ -33,6 +33,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const [editChapterId, setEditChapterId] = useState('');
   const [editPageId, setEditPageId] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
 
   const { upload, uploading } = useImageUpload({ folder: book.slug });
@@ -110,6 +111,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     setEditCaption(img.caption);
     setEditChapterId(String(img.chapterId));
     setEditPageId(img.pageId ? String(img.pageId) : '');
+    setSaveError(null);
   };
 
   const closeEdit = () => {
@@ -117,26 +119,39 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     setEditCaption('');
     setEditChapterId('');
     setEditPageId('');
+    setSaveError(null);
   };
 
   const saveEdit = async () => {
     if (!editingImage) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const chapterId = parseInt(editChapterId) || editingImage.chapterId;
       const pageId = editPageId ? parseInt(editPageId) : null;
 
-      if (editingImage.source === 'gallery') {
-        await supabase.from('gallery').update({
-          image_caption: editCaption || null,
-          chapter_id: chapterId,
-          page_id: pageId,
-        }).eq('id', editingImage.id);
-      } else {
-        await supabase.from('pages').update({
-          image_caption: editCaption || null,
-          chapter_id: chapterId,
-        }).eq('id', editingImage.id);
+      const { error } =
+        editingImage.source === 'gallery'
+          ? await supabase
+              .from('gallery')
+              .update({
+                image_caption: editCaption || null,
+                chapter_id: chapterId,
+                page_id: pageId,
+              })
+              .eq('id', editingImage.id)
+          : await supabase
+              .from('pages')
+              .update({
+                image_caption: editCaption || null,
+                chapter_id: chapterId,
+              })
+              .eq('id', editingImage.id);
+
+      if (error) {
+        console.error('Failed to save photo edit:', error);
+        setSaveError(error.message || 'Something went wrong saving this photo.');
+        return;
       }
 
       setImages((prev) => prev.map((img) =>
@@ -146,6 +161,9 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
           : img
       ));
       closeEdit();
+    } catch (err: any) {
+      console.error('Unexpected error saving photo edit:', err);
+      setSaveError(err?.message || 'Something went wrong saving this photo.');
     } finally {
       setSaving(false);
     }
@@ -335,6 +353,11 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         alt=""
                         className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
                       />
+                      {saveError && (
+                        <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                          {saveError}
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
                         <textarea
