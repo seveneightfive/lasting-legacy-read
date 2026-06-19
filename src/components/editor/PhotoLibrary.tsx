@@ -34,6 +34,8 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const [editPageId, setEditPageId] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
 
   const { upload, uploading } = useImageUpload({ folder: book.slug });
@@ -112,6 +114,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     setEditChapterId(String(img.chapterId));
     setEditPageId(img.pageId ? String(img.pageId) : '');
     setSaveError(null);
+    setPromoteError(null);
   };
 
   const closeEdit = () => {
@@ -120,6 +123,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     setEditChapterId('');
     setEditPageId('');
     setSaveError(null);
+    setPromoteError(null);
   };
 
   const saveEdit = async () => {
@@ -166,6 +170,79 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
       setSaveError(err?.message || 'Something went wrong saving this photo.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Promote a gallery photo into a page's main (left-side) image slot.
+  // If that page already has a main image, demote the existing one into
+  // the gallery first so nothing is lost.
+  const promoteToPageImage = async () => {
+    if (!editingImage || editingImage.source !== 'gallery' || !editPageId) return;
+    const targetPageId = parseInt(editPageId);
+    const targetPage = pages.find((p) => p.id === targetPageId);
+    if (!targetPage) {
+      setPromoteError('Could not find that page.');
+      return;
+    }
+
+    setPromoting(true);
+    setPromoteError(null);
+    try {
+      const chapterId = parseInt(editChapterId) || editingImage.chapterId;
+
+      // 1. If the target page already has a main image, demote it into the gallery.
+      if (targetPage.image_url) {
+        const { error: demoteError } = await supabase.from('gallery').insert({
+          chapter_id: chapterId,
+          page_id: targetPageId,
+          image_url: targetPage.image_url,
+          image_caption: targetPage.image_caption ?? null,
+          sort_order: 0,
+        });
+        if (demoteError) {
+          console.error('Failed to demote existing page image to gallery:', demoteError);
+          setPromoteError(demoteError.message || 'Could not move the existing page photo to the gallery.');
+          return;
+        }
+      }
+
+      // 2. Write this gallery photo into the page's main image slot.
+      const { error: pageUpdateError } = await supabase
+        .from('pages')
+        .update({
+          image_url: editingImage.url,
+          image_caption: editCaption || null,
+        })
+        .eq('id', targetPageId);
+
+      if (pageUpdateError) {
+        console.error('Failed to set page main image:', pageUpdateError);
+        setPromoteError(pageUpdateError.message || 'Could not set this as the page photo.');
+        return;
+      }
+
+      // 3. Remove the original gallery row, since the photo now lives on the page.
+      const { error: deleteError } = await supabase
+        .from('gallery')
+        .delete()
+        .eq('id', editingImage.id);
+
+      if (deleteError) {
+        console.error('Failed to remove gallery row after promotion:', deleteError);
+        // Not fatal — the photo is correctly on the page now, just left a
+        // duplicate behind in the gallery. Surface it but still refresh.
+        setPromoteError(
+          'Photo was set on the page, but the original gallery copy could not be removed automatically.'
+        );
+      }
+
+      await load();
+      closeEdit();
+    } catch (err: any) {
+      console.error('Unexpected error promoting photo to page image:', err);
+      setPromoteError(err?.message || 'Something went wrong setting this as the page photo.');
+    } finally {
+      setPromoting(false);
     }
   };
 
@@ -297,7 +374,12 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         </span>
                       </div>
                       <div className="p-2.5">
-                        <p className="text-[11px] font-avenir text-slate-500 truncate">{img.chapterName}</p>
+                        <p className="text-[11px] font-avenir text-slate-500 truncate">
+                          {img.chapterName}
+                          {img.pageLabel && (
+                            <span className="text-slate-400"> · {img.pageLabel}</span>
+                          )}
+                        </p>
                         <p className="text-xs font-lora italic text-slate-600 truncate mt-0.5">
                           {img.caption || <span className="text-slate-300 not-italic">No caption</span>}
                         </p>
@@ -385,7 +467,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                           <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Assign to page (optional)</label>
                           <select
                             value={editPageId}
-                            onChange={(e) => setEditPageId(e.target.value)}
+                            onChange={(e) => { setEditPageId(e.target.value); setPromoteError(null); }}
                             className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
                           >
                             <option value="">Chapter gallery — not tied to a page</option>
@@ -393,6 +475,28 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                               <option key={p.id} value={p.id}>{p.subtitle || `Page ${p.id}`}</option>
                             ))}
                           </select>
+
+                          {editPageId && (
+                            <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <p className="text-xs font-avenir text-slate-500 mb-2">
+                                {pagesForChapter.find((p) => p.id === parseInt(editPageId))?.image_url
+                                  ? 'This page already has a main photo. Promoting will move the existing one into the gallery.'
+                                  : 'Use this photo as the main image for this page (left side), instead of a gallery thumbnail.'}
+                              </p>
+                              {promoteError && (
+                                <div className="mb-2 px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                                  {promoteError}
+                                </div>
+                              )}
+                              <button
+                                onClick={promoteToPageImage}
+                                disabled={promoting}
+                                className="w-full px-3 py-2 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors"
+                              >
+                                {promoting ? 'Setting as page photo…' : "Set as page's main photo →"}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
