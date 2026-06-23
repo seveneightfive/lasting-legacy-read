@@ -13,13 +13,50 @@ interface PhotoLibraryProps {
 
 interface LibraryImage {
   id: number;
-  source: 'page' | 'gallery';
+  source: 'page' | 'gallery' | 'content';
   url: string;
   caption: string;
   chapterId: number;
   chapterName: string;
   pageId: number | null;
   pageLabel: string;
+}
+
+// Extract <figure> images from rich-text HTML content
+function extractContentImages(
+  html: string,
+  pageId: number,
+  chapterId: number,
+  chapterName: string,
+  pageLabel: string
+): LibraryImage[] {
+  const results: LibraryImage[] = [];
+  const figureRegex = /<figure[^>]*>([\s\S]*?)<\/figure>/gi;
+  let figIdx = 0;
+  let match;
+  while ((match = figureRegex.exec(html)) !== null) {
+    const figHtml = match[1];
+    const imgMatch = figHtml.match(/<img[^>]+src="([^"]+)"/i);
+    const capMatch = figHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+    const src = imgMatch?.[1];
+    if (!src) continue;
+    const caption = capMatch
+      ? capMatch[1].replace(/<[^>]+>/g, '').trim()
+      : '';
+    // Use a synthetic unique id: negative number combining pageId + figure index
+    results.push({
+      id: -(pageId * 1000 + figIdx),
+      source: 'content',
+      url: src,
+      caption,
+      chapterId,
+      chapterName,
+      pageId,
+      pageLabel,
+    });
+    figIdx++;
+  }
+  return results;
 }
 
 export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLibraryProps) {
@@ -56,6 +93,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
 
       const all: LibraryImage[] = [];
 
+      // 1. page.image_url
       (pagesData ?? []).filter((p) => p.image_url).forEach((p) => {
         all.push({
           id: p.id,
@@ -69,6 +107,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
         });
       });
 
+      // 2. gallery table rows
       (galleryData ?? []).filter((g) => g.image_url).forEach((g) => {
         const pg = (pagesData ?? []).find((p) => p.id === g.page_id);
         all.push({
@@ -82,6 +121,20 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
           pageLabel: pg?.subtitle ?? (g.page_id ? `Page ${g.page_id}` : 'Chapter gallery'),
         });
       });
+
+      // 3. <figure> images embedded inside page.content HTML
+      (pagesData ?? [])
+        .filter((p) => p.content?.includes('<figure'))
+        .forEach((p) => {
+          const embedded = extractContentImages(
+            p.content!,
+            p.id,
+            p.chapter_id,
+            chapterMap.get(p.chapter_id) ?? 'Unknown',
+            p.subtitle ?? `Page ${p.id}`
+          );
+          all.push(...embedded);
+        });
 
       setImages(all);
     } finally {
@@ -105,6 +158,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     total: images.length,
     page: images.filter((i) => i.source === 'page').length,
     gallery: images.filter((i) => i.source === 'gallery').length,
+    content: images.filter((i) => i.source === 'content').length,
     captioned: images.filter((i) => i.caption.trim()).length,
   };
 
@@ -128,6 +182,11 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
 
   const saveEdit = async () => {
     if (!editingImage) return;
+    // Content-embedded images can't be edited here (they live inside HTML)
+    if (editingImage.source === 'content') {
+      setSaveError('This image is embedded in page content. Edit its caption in the page editor.');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -153,7 +212,6 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
               .eq('id', editingImage.id);
 
       if (error) {
-        console.error('Failed to save photo edit:', error);
         setSaveError(error.message || 'Something went wrong saving this photo.');
         return;
       }
@@ -166,31 +224,23 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
       ));
       closeEdit();
     } catch (err: any) {
-      console.error('Unexpected error saving photo edit:', err);
       setSaveError(err?.message || 'Something went wrong saving this photo.');
     } finally {
       setSaving(false);
     }
   };
 
-  // Promote a gallery photo into a page's main (left-side) image slot.
-  // If that page already has a main image, demote the existing one into
-  // the gallery first so nothing is lost.
   const promoteToPageImage = async () => {
     if (!editingImage || editingImage.source !== 'gallery' || !editPageId) return;
     const targetPageId = parseInt(editPageId);
     const targetPage = pages.find((p) => p.id === targetPageId);
-    if (!targetPage) {
-      setPromoteError('Could not find that page.');
-      return;
-    }
+    if (!targetPage) { setPromoteError('Could not find that page.'); return; }
 
     setPromoting(true);
     setPromoteError(null);
     try {
       const chapterId = parseInt(editChapterId) || editingImage.chapterId;
 
-      // 1. If the target page already has a main image, demote it into the gallery.
       if (targetPage.image_url) {
         const { error: demoteError } = await supabase.from('gallery').insert({
           chapter_id: chapterId,
@@ -200,46 +250,28 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
           sort_order: 0,
         });
         if (demoteError) {
-          console.error('Failed to demote existing page image to gallery:', demoteError);
           setPromoteError(demoteError.message || 'Could not move the existing page photo to the gallery.');
           return;
         }
       }
 
-      // 2. Write this gallery photo into the page's main image slot.
       const { error: pageUpdateError } = await supabase
         .from('pages')
-        .update({
-          image_url: editingImage.url,
-          image_caption: editCaption || null,
-        })
+        .update({ image_url: editingImage.url, image_caption: editCaption || null })
         .eq('id', targetPageId);
-
       if (pageUpdateError) {
-        console.error('Failed to set page main image:', pageUpdateError);
         setPromoteError(pageUpdateError.message || 'Could not set this as the page photo.');
         return;
       }
 
-      // 3. Remove the original gallery row, since the photo now lives on the page.
-      const { error: deleteError } = await supabase
-        .from('gallery')
-        .delete()
-        .eq('id', editingImage.id);
-
+      const { error: deleteError } = await supabase.from('gallery').delete().eq('id', editingImage.id);
       if (deleteError) {
-        console.error('Failed to remove gallery row after promotion:', deleteError);
-        // Not fatal — the photo is correctly on the page now, just left a
-        // duplicate behind in the gallery. Surface it but still refresh.
-        setPromoteError(
-          'Photo was set on the page, but the original gallery copy could not be removed automatically.'
-        );
+        setPromoteError('Photo was set on the page, but the original gallery copy could not be removed automatically.');
       }
 
       await load();
       closeEdit();
     } catch (err: any) {
-      console.error('Unexpected error promoting photo to page image:', err);
       setPromoteError(err?.message || 'Something went wrong setting this as the page photo.');
     } finally {
       setPromoting(false);
@@ -259,6 +291,18 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const pagesForChapter = pages.filter(
     (p) => p.chapter_id === parseInt(editChapterId || String(editingImage?.chapterId ?? 0))
   );
+
+  const sourceLabel = (source: LibraryImage['source']) => {
+    if (source === 'gallery') return 'gallery';
+    if (source === 'content') return 'inline';
+    return 'page';
+  };
+
+  const sourceBadgeClass = (source: LibraryImage['source']) => {
+    if (source === 'gallery') return 'bg-amber-500/90 text-white';
+    if (source === 'content') return 'bg-blue-500/90 text-white';
+    return 'bg-slate-700/80 text-white';
+  };
 
   return (
     <AnimatePresence>
@@ -294,11 +338,12 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
             </div>
 
             {/* Stats */}
-            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-4 gap-3 shrink-0">
+            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-5 gap-3 shrink-0">
               {[
                 { label: 'Total photos', value: stats.total },
                 { label: 'Page images', value: stats.page },
                 { label: 'Gallery photos', value: stats.gallery },
+                { label: 'Inline (content)', value: stats.content },
                 { label: 'With captions', value: stats.captioned },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
@@ -328,6 +373,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                 <option value="">All sources</option>
                 <option value="page">Page images</option>
                 <option value="gallery">Gallery photos</option>
+                <option value="content">Inline (content)</option>
               </select>
               <div className="flex items-center gap-2 flex-1 min-w-[160px]">
                 <Search size={14} className="text-slate-400 shrink-0" />
@@ -368,9 +414,8 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                           className="w-full h-full object-cover"
                           loading="lazy"
                         />
-                        <span className={`absolute bottom-1.5 left-1.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded
-                          ${img.source === 'gallery' ? 'bg-amber-500/90 text-white' : 'bg-slate-700/80 text-white'}`}>
-                          {img.source === 'gallery' ? 'gallery' : 'page'}
+                        <span className={`absolute bottom-1.5 left-1.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${sourceBadgeClass(img.source)}`}>
+                          {sourceLabel(img.source)}
                         </span>
                       </div>
                       <div className="p-2.5">
@@ -435,69 +480,82 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         alt=""
                         className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
                       />
+
+                      {/* Read-only notice for content-embedded images */}
+                      {editingImage.source === 'content' && (
+                        <div className="px-3 py-2 text-xs font-avenir text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
+                          This image is embedded inside page content. To edit its caption, open the page in the editor and update the figure caption directly.
+                        </div>
+                      )}
+
                       {saveError && (
                         <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
                           {saveError}
                         </div>
                       )}
-                      <div>
-                        <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
-                        <textarea
-                          value={editCaption}
-                          onChange={(e) => setEditCaption(e.target.value)}
-                          placeholder="Add a caption…"
-                          rows={3}
-                          className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Move to chapter</label>
-                        <select
-                          value={editChapterId}
-                          onChange={(e) => { setEditChapterId(e.target.value); setEditPageId(''); }}
-                          className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
-                        >
-                          {chapters.map((c) => (
-                            <option key={c.id} value={c.id}>{c.title || `Chapter ${c.number}`}</option>
-                          ))}
-                        </select>
-                      </div>
-                      {editingImage.source === 'gallery' && (
-                        <div>
-                          <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Assign to page (optional)</label>
-                          <select
-                            value={editPageId}
-                            onChange={(e) => { setEditPageId(e.target.value); setPromoteError(null); }}
-                            className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
-                          >
-                            <option value="">Chapter gallery — not tied to a page</option>
-                            {pagesForChapter.map((p) => (
-                              <option key={p.id} value={p.id}>{p.subtitle || `Page ${p.id}`}</option>
-                            ))}
-                          </select>
 
-                          {editPageId && (
-                            <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                              <p className="text-xs font-avenir text-slate-500 mb-2">
-                                {pagesForChapter.find((p) => p.id === parseInt(editPageId))?.image_url
-                                  ? 'This page already has a main photo. Promoting will move the existing one into the gallery.'
-                                  : 'Use this photo as the main image for this page (left side), instead of a gallery thumbnail.'}
-                              </p>
-                              {promoteError && (
-                                <div className="mb-2 px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
-                                  {promoteError}
+                      {editingImage.source !== 'content' && (
+                        <>
+                          <div>
+                            <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
+                            <textarea
+                              value={editCaption}
+                              onChange={(e) => setEditCaption(e.target.value)}
+                              placeholder="Add a caption…"
+                              rows={3}
+                              className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Move to chapter</label>
+                            <select
+                              value={editChapterId}
+                              onChange={(e) => { setEditChapterId(e.target.value); setEditPageId(''); }}
+                              className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
+                            >
+                              {chapters.map((c) => (
+                                <option key={c.id} value={c.id}>{c.title || `Chapter ${c.number}`}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {editingImage.source === 'gallery' && (
+                            <div>
+                              <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Assign to page (optional)</label>
+                              <select
+                                value={editPageId}
+                                onChange={(e) => { setEditPageId(e.target.value); setPromoteError(null); }}
+                                className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
+                              >
+                                <option value="">Chapter gallery — not tied to a page</option>
+                                {pagesForChapter.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.subtitle || `Page ${p.id}`}</option>
+                                ))}
+                              </select>
+
+                              {editPageId && (
+                                <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                  <p className="text-xs font-avenir text-slate-500 mb-2">
+                                    {pagesForChapter.find((p) => p.id === parseInt(editPageId))?.image_url
+                                      ? 'This page already has a main photo. Promoting will move the existing one into the gallery.'
+                                      : 'Use this photo as the main image for this page (left side), instead of a gallery thumbnail.'}
+                                  </p>
+                                  {promoteError && (
+                                    <div className="mb-2 px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                                      {promoteError}
+                                    </div>
+                                  )}
+                                  <button
+                                    onClick={promoteToPageImage}
+                                    disabled={promoting}
+                                    className="w-full px-3 py-2 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors"
+                                  >
+                                    {promoting ? 'Setting as page photo…' : "Set as page's main photo →"}
+                                  </button>
                                 </div>
                               )}
-                              <button
-                                onClick={promoteToPageImage}
-                                disabled={promoting}
-                                className="w-full px-3 py-2 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors"
-                              >
-                                {promoting ? 'Setting as page photo…' : "Set as page's main photo →"}
-                              </button>
                             </div>
                           )}
-                        </div>
+                        </>
                       )}
                     </div>
                     <div className="px-5 py-4 border-t border-slate-200 flex justify-between items-center">
@@ -515,13 +573,15 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         >
                           Cancel
                         </button>
-                        <button
-                          onClick={saveEdit}
-                          disabled={saving}
-                          className="px-4 py-2 text-sm font-avenir text-white bg-slate-800 rounded-lg hover:bg-slate-900 disabled:opacity-50 transition-colors"
-                        >
-                          {saving ? 'Saving…' : 'Save changes'}
-                        </button>
+                        {editingImage.source !== 'content' && (
+                          <button
+                            onClick={saveEdit}
+                            disabled={saving}
+                            className="px-4 py-2 text-sm font-avenir text-white bg-slate-800 rounded-lg hover:bg-slate-900 disabled:opacity-50 transition-colors"
+                          >
+                            {saving ? 'Saving…' : 'Save changes'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </motion.div>
