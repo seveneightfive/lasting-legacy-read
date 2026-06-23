@@ -176,7 +176,7 @@ export async function downloadBookPDF(
     });
   };
 
-  // ── FIX 1: embedImage — caption pre-measured so it never overlaps the image ──
+  // ── embedImage — caption pre-measured so it never overlaps the image ──────
   const embedImage = async (
     url: string,
     caption: string | null | undefined,
@@ -230,7 +230,7 @@ export async function downloadBookPDF(
     return true;
   };
 
-  // ── FIX 2: 2-up gallery layout ────────────────────────────────────────────
+  // ── 2-up gallery layout ───────────────────────────────────────────────────
   const embedGalleryRow = async (items: GalleryItem[]): Promise<void> => {
     for (let i = 0; i < items.length; i += 2) {
       const pair = items.slice(i, i + 2);
@@ -302,19 +302,34 @@ export async function downloadBookPDF(
     }
   };
 
-  // Full-page bleed image (chapter opener left page, and page.image_url)
+  // ── Full-page bleed image ─────────────────────────────────────────────────
+  // Tries canvas first (works when CORS headers are present on the image URL).
+  // Falls back to passing the URL directly to jsPDF, which handles it internally.
   const embedFullPage = async (url: string): Promise<void> => {
     if (!url?.trim()) return;
+
     const data = await loadImageViaCanvas(url);
     loadedImages++;
     report(15 + (loadedImages / Math.max(totalImages, 1)) * 78);
-    if (!data) return;
+
+    if (!data) {
+      // Canvas failed (likely CORS / tainted canvas) — let jsPDF load the URL directly
+      console.warn('[PDF] Canvas failed for full-page image, trying direct URL:', url);
+      try {
+        pdf.addImage(url, 'JPEG', 0, 0, PW, PH);
+      } catch (err) {
+        console.warn('[PDF] Direct URL also failed for full-page image:', url, err);
+      }
+      return;
+    }
+
     const dims = await new Promise<{ w: number; h: number }>((res) => {
       const tmp = new Image();
       tmp.onload = () => res({ w: tmp.naturalWidth, h: tmp.naturalHeight });
       tmp.onerror = () => res({ w: PW, h: PH });
       tmp.src = data;
     });
+
     const scale = Math.max(PW / dims.w, PH / dims.h);
     const w = dims.w * scale;
     const h = dims.h * scale;
@@ -451,7 +466,6 @@ export async function downloadBookPDF(
             addText(page.subtitle, 13, 'bold', [55, 35, 15], true);
             gap(10);
           }
-          // ── FIX 2: use 2-up layout for gallery pages ──
           await embedGalleryRow(allImgs);
         }
         continue;
@@ -471,7 +485,7 @@ export async function downloadBookPDF(
         gap(4);
       }
 
-      // ── FIX 3: page.image_url → full-bleed page, then prose on next page ──
+      // ── page.image_url → full-bleed page, then prose on next page ────────
       if (page.image_url) {
         newPage();
         await embedFullPage(page.image_url);
