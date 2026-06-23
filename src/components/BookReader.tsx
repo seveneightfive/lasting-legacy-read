@@ -95,6 +95,10 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     }
   }, [currentState, book.user]);
 
+  useEffect(() => {
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}, [currentState, currentPageIndex]);
+
   const fetchPages = async (chapterId: number) => {
     setLoading(true);
     try {
