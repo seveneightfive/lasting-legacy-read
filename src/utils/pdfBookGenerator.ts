@@ -176,7 +176,7 @@ export async function downloadBookPDF(
     });
   };
 
-  // Embed one image URL. Returns false if it failed.
+  // ── FIX 1: embedImage — caption pre-measured so it never overlaps the image ──
   const embedImage = async (
     url: string,
     caption: string | null | undefined,
@@ -192,7 +192,6 @@ export async function downloadBookPDF(
       return false;
     }
 
-    // Get dimensions from the data URL via an Image element
     const dims = await new Promise<{ w: number; h: number }>((res) => {
       const tmp = new Image();
       tmp.onload = () => res({ w: tmp.naturalWidth, h: tmp.naturalHeight });
@@ -201,31 +200,109 @@ export async function downloadBookPDF(
     });
 
     const { w, h } = fitDimensions(dims.w, dims.h, maxW, maxH);
-    const capH = caption
-      ? Math.ceil(caption.length / 52) * 11 + 10
-      : 0;
 
-    ensureSpace(h + capH + 14);
-
-    const x = ML + (TW - w) / 2;
-    pdf.addImage(data, 'JPEG', x, y, w, h);
-    y += h + 4;
-
+    // Pre-measure caption BEFORE placing so ensureSpace reserves the right total height
+    let capLines: string[] = [];
     if (caption?.trim()) {
       pdf.setFontSize(8);
       pdf.setFont('helvetica', 'italic');
+      capLines = pdf.splitTextToSize(caption.trim(), maxW);
+    }
+    const capH = capLines.length > 0 ? capLines.length * 11 + 8 : 0;
+
+    // Reserve space for image + gap + caption together so they never split across pages
+    ensureSpace(h + 6 + capH + 8);
+
+    const x = ML + (TW - w) / 2;
+    pdf.addImage(data, 'JPEG', x, y, w, h);
+    y += h + 6; // gap between image bottom and caption top
+
+    if (capLines.length > 0) {
+      pdf.setFontSize(8);
+      pdf.setFont('helvetica', 'italic');
       pdf.setTextColor(110, 90, 70);
-      const capLines: string[] = pdf.splitTextToSize(caption.trim(), TW);
       capLines.forEach((line) => {
         pdf.text(line, PW / 2, y, { align: 'center' });
         y += 11;
       });
     }
-    y += 10;
+    y += 8;
     return true;
   };
 
-  // Full-page bleed image (chapter opener left page)
+  // ── FIX 2: 2-up gallery layout ────────────────────────────────────────────
+  const embedGalleryRow = async (items: GalleryItem[]): Promise<void> => {
+    for (let i = 0; i < items.length; i += 2) {
+      const pair = items.slice(i, i + 2);
+
+      // Odd item — render full width
+      if (pair.length === 1) {
+        await embedImage(pair[0].image_url, pair[0].image_caption ?? pair[0].image_title, 200);
+        continue;
+      }
+
+      const colW = (TW - 8) / 2; // 8pt gutter between the two columns
+      const maxH = 180;
+
+      // Load both images in parallel
+      const dataResults = await Promise.all(
+        pair.map(async (g) => {
+          const d = await loadImageViaCanvas(g.image_url);
+          loadedImages++;
+          report(15 + (loadedImages / Math.max(totalImages, 1)) * 78);
+          return d;
+        })
+      );
+
+      // Compute rendered dimensions + caption lines for each column
+      const cols = await Promise.all(
+        dataResults.map(async (data, idx) => {
+          if (!data) return null;
+          const dims = await new Promise<{ w: number; h: number }>((res) => {
+            const tmp = new Image();
+            tmp.onload = () => res({ w: tmp.naturalWidth, h: tmp.naturalHeight });
+            tmp.onerror = () => res({ w: 300, h: 200 });
+            tmp.src = data;
+          });
+          const { w, h } = fitDimensions(dims.w, dims.h, colW, maxH);
+          const capText = (pair[idx].image_caption ?? pair[idx].image_title ?? '').trim();
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'italic');
+          const capLines: string[] = capText ? pdf.splitTextToSize(capText, colW) : [];
+          const capH = capLines.length > 0 ? capLines.length * 11 + 8 : 0;
+          return { data, w, h, capLines, capH };
+        })
+      );
+
+      const rowImgH = Math.max(...cols.map((c) => (c ? c.h : 0)));
+      const rowCapH = Math.max(...cols.map((c) => (c ? c.capH : 0)));
+      const rowH = rowImgH + 6 + rowCapH;
+
+      ensureSpace(rowH + 8);
+
+      cols.forEach((col, idx) => {
+        if (!col) return;
+        const xOffset = ML + idx * (colW + 8);
+        // Center image within its column
+        const imgX = xOffset + (colW - col.w) / 2;
+        pdf.addImage(col.data, 'JPEG', imgX, y, col.w, col.h);
+        if (col.capLines.length > 0) {
+          let cy = y + rowImgH + 6; // align captions at the same baseline
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'italic');
+          pdf.setTextColor(110, 90, 70);
+          col.capLines.forEach((line: string) => {
+            pdf.text(line, xOffset + colW / 2, cy, { align: 'center' });
+            cy += 11;
+          });
+        }
+      });
+
+      y += rowH + 8;
+    }
+  };
+
+  // Full-page bleed image (chapter opener left page, and page.image_url)
   const embedFullPage = async (url: string): Promise<void> => {
     if (!url?.trim()) return;
     const data = await loadImageViaCanvas(url);
@@ -333,7 +410,6 @@ export async function downloadBookPDF(
     pdf.text(`CHAPTER ${chapter.number}`, PW / 2, y, { align: 'center' });
     y += 24;
 
-    // Chapter title in Helvetica bold (Avenir-like)
     addText(chapter.title, 20, 'bold', [30, 20, 10], true);
 
     if (chapter.lede) {
@@ -368,7 +444,6 @@ export async function downloadBookPDF(
       // ── GALLERY PAGE ────────────────────────────────────────────────────
       if (page.gallery_page) {
         const imgs = galleryByPage.get(page.id) ?? [];
-        // Even if no page-linked gallery items, try floatingGallery too
         const allImgs = imgs.length > 0 ? imgs : floatingGallery;
         if (allImgs.length > 0) {
           newPage();
@@ -376,9 +451,8 @@ export async function downloadBookPDF(
             addText(page.subtitle, 13, 'bold', [55, 35, 15], true);
             gap(10);
           }
-          for (const g of allImgs) {
-            await embedImage(g.image_url, g.image_caption ?? g.image_title, 195);
-          }
+          // ── FIX 2: use 2-up layout for gallery pages ──
+          await embedGalleryRow(allImgs);
         }
         continue;
       }
@@ -386,7 +460,6 @@ export async function downloadBookPDF(
       // ── Section heading ─────────────────────────────────────────────────
       if (page.subtitle?.trim()) {
         gap(10);
-        // Bold + slightly spaced — closest to Avenir heading feel in jsPDF
         pdf.setFontSize(13);
         pdf.setFont('helvetica', 'bold');
         pdf.setTextColor(50, 32, 14);
@@ -398,20 +471,36 @@ export async function downloadBookPDF(
         gap(4);
       }
 
-      // ── page.image_url (the dedicated image field) ──────────────────────
+      // ── FIX 3: page.image_url → full-bleed page, then prose on next page ──
       if (page.image_url) {
-        await embedImage(page.image_url, page.image_caption, 200);
+        newPage();
+        await embedFullPage(page.image_url);
+        // Optional caption overlaid at bottom with dark band for legibility
+        if (page.image_caption?.trim()) {
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'italic');
+          pdf.setTextColor(220, 210, 195);
+          const capLines: string[] = pdf.splitTextToSize(page.image_caption.trim(), TW);
+          let cy = PH - MB - capLines.length * 11 - 4;
+          pdf.setFillColor(0, 0, 0);
+          pdf.setGState(new (pdf as any).GState({ opacity: 0.45 }));
+          pdf.rect(0, cy - 10, PW, capLines.length * 11 + 16, 'F');
+          pdf.setGState(new (pdf as any).GState({ opacity: 1 }));
+          capLines.forEach((line) => {
+            pdf.text(line, PW / 2, cy, { align: 'center' });
+            cy += 11;
+          });
+        }
+        // Prose starts on a fresh page after the full-bleed image
+        newPage();
       }
 
       // ── Body content ─────────────────────────────────────────────────────
-      // Parse out any <figure> blocks embedded in HTML before rendering text
       if (page.content?.trim()) {
         const isHtml = page.content.trim().startsWith('<');
         if (isHtml) {
           const { text: strippedHtml, figures } = extractFigures(page.content);
-          // Render prose
           addText(strippedHtml, 10);
-          // Render inline figures in document order (after prose — mirrors reader behaviour)
           for (const fig of figures) {
             for (const src of fig.srcs) {
               await embedImage(src, fig.caption, 200);
@@ -448,20 +537,19 @@ export async function downloadBookPDF(
         gap(10);
       }
 
-      // ── Gallery items linked to this page ─────────────────────────────────
-      for (const g of galleryByPage.get(page.id) ?? []) {
-        await embedImage(g.image_url, g.image_caption ?? g.image_title, 195);
+      // ── Gallery items linked to this page (2-up) ──────────────────────────
+      const pageGallery = galleryByPage.get(page.id) ?? [];
+      if (pageGallery.length > 0) {
+        await embedGalleryRow(pageGallery);
       }
     }
 
-    // ── Floating gallery (chapter-level, no page_id) ─────────────────────
+    // ── Floating gallery (chapter-level, no page_id) — 2-up ─────────────────
     if (floatingGallery.length > 0) {
       addDivider();
       addText('Photos', 11, 'bold', [100, 80, 60]);
       gap(6);
-      for (const g of floatingGallery) {
-        await embedImage(g.image_url, g.image_caption ?? g.image_title, 200);
-      }
+      await embedGalleryRow(floatingGallery);
     }
   }
 
