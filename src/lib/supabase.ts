@@ -17,6 +17,7 @@ export interface Chapter {
   id: number; title: string; lede?: string; book_id: number;
   number: number; image_url?: string; created_at?: string;
   user?: string; row_id?: string;
+  is_deleted?: boolean;
 }
 
 export interface Page {
