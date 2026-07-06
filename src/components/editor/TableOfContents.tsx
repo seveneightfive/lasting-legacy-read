@@ -45,6 +45,14 @@ interface TableOfContentsProps {
    * end of the chapter and navigate the editor to it.
    */
   onAddPage: (chapterId: number) => void | Promise<void>;
+  /**
+   * Create a new chapter at the end of the book and navigate the editor to it.
+   */
+  onAddChapter: () => void | Promise<void>;
+  /**
+   * Delete (hide) a chapter and all of its pages.
+   */
+  onDeleteChapter: (chapterId: number) => void | Promise<void>;
 }
 
 type ChapterNode = Extract<TocNode, { kind: 'chapter' }>;
@@ -58,6 +66,7 @@ const parseChapterDropId = (id: UniqueIdentifier) => Number(String(id).slice(CHA
 export default function TableOfContents({
   open, onClose, toc, currentState, onNavigate,
   onDeletePage, onReorderPages, onMovePageToChapter, onAddPage,
+  onAddChapter, onDeleteChapter,
 }: TableOfContentsProps) {
   const currentKey = stateKey(currentState);
   const chapters = useMemo(
@@ -92,6 +101,8 @@ export default function TableOfContents({
   const [activeId, setActiveId] = useState<number | null>(null);
   const [overChapterId, setOverChapterId] = useState<number | null>(null);
   const [pendingChapterId, setPendingChapterId] = useState<number | null>(null);
+  const [isAddingChapter, setIsAddingChapter] = useState(false);
+  const [collapsedChapters, setCollapsedChapters] = useState<Set<number>>(new Set());
 
   const activeLocation = activeId != null ? findPageLocation(activeId) : null;
 
@@ -108,6 +119,25 @@ export default function TableOfContents({
     } finally {
       setPendingChapterId(null);
     }
+  };
+
+  const handleAddChapter = async () => {
+    if (isAddingChapter) return;
+    setIsAddingChapter(true);
+    try {
+      await onAddChapter();
+    } finally {
+      setIsAddingChapter(false);
+    }
+  };
+
+  const toggleCollapsed = (chapterId: number) => {
+    setCollapsedChapters((prev) => {
+      const next = new Set(prev);
+      if (next.has(chapterId)) next.delete(chapterId);
+      else next.add(chapterId);
+      return next;
+    });
   };
 
   const collisionDetection: CollisionDetection = (args) => {
@@ -246,6 +276,7 @@ export default function TableOfContents({
                   const isDraggingPage = activeLocation != null;
                   const isOtherChapter = isDraggingPage
                     && activeLocation!.chapter.chapter.id !== node.chapter.id;
+                  const isCollapsed = collapsedChapters.has(node.chapter.id);
 
                   return (
                     <ChapterBlock
@@ -256,9 +287,12 @@ export default function TableOfContents({
                       onNavigate={handleNav}
                       onDeletePage={onDeletePage}
                       onAddPage={handleAddPage}
+                      onDeleteChapter={onDeleteChapter}
                       isAddingPage={pendingChapterId === node.chapter.id}
                       highlightAsTarget={isOtherChapter && overChapterId === node.chapter.id}
                       showEmptyHint={isOtherChapter}
+                      isCollapsed={isCollapsed}
+                      onToggleCollapsed={() => toggleCollapsed(node.chapter.id)}
                     />
                   );
                 })}
@@ -273,6 +307,18 @@ export default function TableOfContents({
                   ) : null}
                 </DragOverlay>
               </DndContext>
+
+              <button
+                type="button"
+                onClick={handleAddChapter}
+                disabled={isAddingChapter}
+                className="w-full flex items-center gap-2 px-3 py-2 mt-4 rounded-lg text-left
+                  font-avenir text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100
+                  transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                <Plus size={14} className="shrink-0" />
+                <span>{isAddingChapter ? 'Adding…' : 'Add Chapter'}</span>
+              </button>
             </nav>
 
             <div className="px-5 py-3 border-t border-slate-200">
@@ -294,80 +340,117 @@ interface ChapterBlockProps {
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
   onAddPage: (chapterId: number) => void | Promise<void>;
+  onDeleteChapter: (chapterId: number) => void | Promise<void>;
   isAddingPage: boolean;
   highlightAsTarget: boolean;
   showEmptyHint: boolean;
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
 function ChapterBlock({
   node, chapterActive, currentKey, onNavigate, onDeletePage,
-  onAddPage, isAddingPage, highlightAsTarget, showEmptyHint,
+  onAddPage, onDeleteChapter, isAddingPage, highlightAsTarget, showEmptyHint,
+  isCollapsed, onToggleCollapsed,
 }: ChapterBlockProps) {
   const pageIds = useMemo(() => node.pages.map((p) => p.page.id), [node.pages]);
   const isEmpty = node.pages.length === 0;
 
   return (
     <div className="group/chapter mt-3">
-      <button
-        onClick={() => onNavigate(node.state)}
-        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left
-          font-avenir text-sm font-medium transition-colors
-          ${chapterActive
-            ? 'bg-slate-800 text-white'
-            : 'text-slate-800 hover:bg-slate-100'
-          }`}
+      <div
+        className={`flex items-center gap-1 rounded-lg transition-colors
+          ${chapterActive ? 'bg-slate-800' : 'hover:bg-slate-100'}`}
       >
-        <span className={`text-xs ${chapterActive ? 'text-slate-300' : 'text-slate-400'}`}>
-          {node.chapter.number}.
-        </span>
-        <span className="flex-1 truncate">{node.chapter.title}</span>
-      </button>
-
-      <SortableContext
-        id={chapterDropId(node.chapter.id)}
-        items={pageIds}
-        strategy={verticalListSortingStrategy}
-      >
-        <DroppableChapterArea
-          chapterId={node.chapter.id}
-          highlight={highlightAsTarget}
-          isEmpty={isEmpty}
-          showEmptyHint={showEmptyHint}
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className={`p-2 shrink-0 transition-colors
+            ${chapterActive ? 'text-slate-300 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}
+          aria-label={isCollapsed ? `Expand ${node.chapter.title}` : `Collapse ${node.chapter.title}`}
+          aria-expanded={!isCollapsed}
         >
-          {!isEmpty && (
-            <ul>
-              {node.pages.map((p) => (
-                <SortablePageRow
-                  key={p.page.id}
-                  page={p}
-                  chapterId={node.chapter.id}
-                  isActive={stateKey(p.state) === currentKey}
-                  onNavigate={onNavigate}
-                  onDeletePage={onDeletePage}
-                />
-              ))}
-            </ul>
-          )}
+          <ChevronRight
+            size={14}
+            className={`transition-transform duration-150 ${isCollapsed ? '' : 'rotate-90'}`}
+          />
+        </button>
 
-          {/* Add-page button: always visible for empty chapters, hover-reveal otherwise */}
-          <button
-            type="button"
-            onClick={() => onAddPage(node.chapter.id)}
-            disabled={isAddingPage}
-            className={`w-full flex items-center gap-2 pl-2 pr-3 py-1.5 text-left
-              text-xs font-avenir text-slate-400 hover:text-slate-700 hover:bg-slate-50
-              transition-all disabled:opacity-50 disabled:cursor-wait
-              ${isEmpty
-                ? 'opacity-100'
-                : 'opacity-0 group-hover/chapter:opacity-100 focus:opacity-100'}
-            `}
-            aria-label={`Add page to ${node.chapter.title}`}
+        <button
+          onClick={() => onNavigate(node.state)}
+          className={`flex-1 flex items-center gap-2 py-2 pr-2 text-left min-w-0
+            font-avenir text-sm font-medium transition-colors
+            ${chapterActive ? 'text-white' : 'text-slate-800'}`}
+        >
+          <span className={`text-xs shrink-0 ${chapterActive ? 'text-slate-300' : 'text-slate-400'}`}>
+            {node.chapter.number}.
+          </span>
+          <span className="flex-1 truncate">{node.chapter.title}</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDeleteChapter(node.chapter.id);
+          }}
+          className={`p-1 mr-1.5 shrink-0 opacity-0 group-hover/chapter:opacity-100 focus:opacity-100
+            transition-opacity
+            ${chapterActive ? 'text-slate-300 hover:text-red-300' : 'text-slate-300 hover:text-red-600'}`}
+          aria-label={`Delete ${node.chapter.title}`}
+          title="Delete chapter"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+
+      {!isCollapsed && (
+        <SortableContext
+          id={chapterDropId(node.chapter.id)}
+          items={pageIds}
+          strategy={verticalListSortingStrategy}
+        >
+          <DroppableChapterArea
+            chapterId={node.chapter.id}
+            highlight={highlightAsTarget}
+            isEmpty={isEmpty}
+            showEmptyHint={showEmptyHint}
           >
-            <Plus size={12} className="shrink-0" />
-            <span>{isAddingPage ? 'Adding…' : 'Add page'}</span>
-          </button>
-        </DroppableChapterArea>
-      </SortableContext>
+            {!isEmpty && (
+              <ul>
+                {node.pages.map((p) => (
+                  <SortablePageRow
+                    key={p.page.id}
+                    page={p}
+                    chapterId={node.chapter.id}
+                    isActive={stateKey(p.state) === currentKey}
+                    onNavigate={onNavigate}
+                    onDeletePage={onDeletePage}
+                  />
+                ))}
+              </ul>
+            )}
+
+            {/* Add-page button: always visible for empty chapters, hover-reveal otherwise */}
+            <button
+              type="button"
+              onClick={() => onAddPage(node.chapter.id)}
+              disabled={isAddingPage}
+              className={`w-full flex items-center gap-2 pl-2 pr-3 py-1.5 text-left
+                text-xs font-avenir text-slate-400 hover:text-slate-700 hover:bg-slate-50
+                transition-all disabled:opacity-50 disabled:cursor-wait
+                ${isEmpty
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/chapter:opacity-100 focus:opacity-100'}
+              `}
+              aria-label={`Add page to ${node.chapter.title}`}
+            >
+              <Plus size={12} className="shrink-0" />
+              <span>{isAddingPage ? 'Adding…' : 'Add page'}</span>
+            </button>
+          </DroppableChapterArea>
+        </SortableContext>
+      )}
     </div>
   );
 }
