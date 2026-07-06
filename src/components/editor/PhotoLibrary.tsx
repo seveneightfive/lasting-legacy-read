@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, Search, Images } from 'lucide-react';
 import { supabase, Book, Chapter, Page, GalleryItem } from '../../lib/supabase';
@@ -451,146 +452,140 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
             </div>
 
             {/* Edit modal */}
-            <AnimatePresence>
-              {editingImage && (
-                <>
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={closeEdit}
-                    className="absolute inset-0 bg-black/40 z-10"
-                  />
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.15 }}
-                    className="absolute inset-x-4 top-1/2 -translate-y-1/2 z-20 bg-white rounded-xl shadow-2xl max-w-md mx-auto overflow-hidden"
+{editingImage && createPortal(
+  <AnimatePresence>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={closeEdit}
+      className="fixed inset-0 bg-black/40 z-[60]"
+    />
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.15 }}
+        className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-white rounded-xl shadow-2xl pointer-events-auto"
+      >
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h3 className="font-avenir text-slate-800 text-sm font-semibold">Edit photo</h3>
+          <button onClick={closeEdit} className="text-slate-400 hover:text-slate-700">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <img
+            src={editingImage.url}
+            alt=""
+            className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
+          />
+
+          {editingImage.source === 'content' && (
+            <div className="px-3 py-2 text-xs font-avenir text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
+              This image is embedded inside page content. To edit its caption, open the page in the editor and update the figure caption directly.
+            </div>
+          )}
+
+          {saveError && (
+            <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
+              {saveError}
+            </div>
+          )}
+
+          {editingImage.source !== 'content' && (
+            <>
+              <div>
+                <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
+                <textarea
+                  value={editCaption}
+                  onChange={(e) => setEditCaption(e.target.value)}
+                  placeholder="Add a caption…"
+                  rows={3}
+                  className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Move to chapter</label>
+                <select
+                  value={editChapterId}
+                  onChange={(e) => { setEditChapterId(e.target.value); setEditPageId(''); }}
+                  className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
+                >
+                  {chapters.map((c) => (
+                    <option key={c.id} value={c.id}>{c.title || `Chapter ${c.number}`}</option>
+                  ))}
+                </select>
+              </div>
+              {editingImage.source === 'gallery' && (
+                <div>
+                  <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Assign to page (optional)</label>
+                  <select
+                    value={editPageId}
+                    onChange={(e) => { setEditPageId(e.target.value); setPromoteError(null); }}
+                    className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
                   >
-                    <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-                      <h3 className="font-avenir text-slate-800 text-sm font-semibold">Edit photo</h3>
-                      <button onClick={closeEdit} className="text-slate-400 hover:text-slate-700">
-                        <X size={16} />
-                      </button>
-                    </div>
-                    <div className="p-5 space-y-4">
-                      <img
-                        src={editingImage.url}
-                        alt=""
-                        className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
-                      />
+                    <option value="">Chapter gallery — not tied to a page</option>
+                    {pagesForChapter.map((p) => (
+                      <option key={p.id} value={p.id}>{p.subtitle || `Page ${p.id}`}</option>
+                    ))}
+                  </select>
 
-                      {/* Read-only notice for content-embedded images */}
-                      {editingImage.source === 'content' && (
-                        <div className="px-3 py-2 text-xs font-avenir text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
-                          This image is embedded inside page content. To edit its caption, open the page in the editor and update the figure caption directly.
+                  {editPageId && (
+                    <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                      <p className="text-xs font-avenir text-slate-500 mb-2">
+                        {pagesForChapter.find((p) => p.id === parseInt(editPageId))?.image_url
+                          ? 'This page already has a main photo. Promoting will move the existing one into the gallery.'
+                          : 'Use this photo as the main image for this page (left side), instead of a gallery thumbnail.'}
+                      </p>
+                      {promoteError && (
+                        <div className="mb-2 px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
+                          {promoteError}
                         </div>
                       )}
-
-                      {saveError && (
-                        <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
-                          {saveError}
-                        </div>
-                      )}
-
-                      {editingImage.source !== 'content' && (
-                        <>
-                          <div>
-                            <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
-                            <textarea
-                              value={editCaption}
-                              onChange={(e) => setEditCaption(e.target.value)}
-                              placeholder="Add a caption…"
-                              rows={3}
-                              className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Move to chapter</label>
-                            <select
-                              value={editChapterId}
-                              onChange={(e) => { setEditChapterId(e.target.value); setEditPageId(''); }}
-                              className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
-                            >
-                              {chapters.map((c) => (
-                                <option key={c.id} value={c.id}>{c.title || `Chapter ${c.number}`}</option>
-                              ))}
-                            </select>
-                          </div>
-                          {editingImage.source === 'gallery' && (
-                            <div>
-                              <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Assign to page (optional)</label>
-                              <select
-                                value={editPageId}
-                                onChange={(e) => { setEditPageId(e.target.value); setPromoteError(null); }}
-                                className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-white"
-                              >
-                                <option value="">Chapter gallery — not tied to a page</option>
-                                {pagesForChapter.map((p) => (
-                                  <option key={p.id} value={p.id}>{p.subtitle || `Page ${p.id}`}</option>
-                                ))}
-                              </select>
-
-                              {editPageId && (
-                                <div className="mt-2.5 p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                                  <p className="text-xs font-avenir text-slate-500 mb-2">
-                                    {pagesForChapter.find((p) => p.id === parseInt(editPageId))?.image_url
-                                      ? 'This page already has a main photo. Promoting will move the existing one into the gallery.'
-                                      : 'Use this photo as the main image for this page (left side), instead of a gallery thumbnail.'}
-                                  </p>
-                                  {promoteError && (
-                                    <div className="mb-2 px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
-                                      {promoteError}
-                                    </div>
-                                  )}
-                                  <button
-                                    onClick={promoteToPageImage}
-                                    disabled={promoting}
-                                    className="w-full px-3 py-2 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors"
-                                  >
-                                    {promoting ? 'Setting as page photo…' : "Set as page's main photo →"}
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    <div className="px-5 py-4 border-t border-slate-200 flex justify-between items-center">
                       <button
-                        onClick={() => downloadImage(editingImage.url, editingImage.id)}
-                        className="flex items-center gap-1.5 text-xs font-avenir text-slate-500 hover:text-slate-700"
+                        onClick={promoteToPageImage}
+                        disabled={promoting}
+                        className="w-full px-3 py-2 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors"
                       >
-                        <Download size={12} />
-                        Download
+                        {promoting ? 'Setting as page photo…' : "Set as page's main photo →"}
                       </button>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={closeEdit}
-                          className="px-4 py-2 text-sm font-avenir text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                        {editingImage.source !== 'content' && (
-                          <button
-                            onClick={saveEdit}
-                            disabled={saving}
-                            className="px-4 py-2 text-sm font-avenir text-white bg-slate-800 rounded-lg hover:bg-slate-900 disabled:opacity-50 transition-colors"
-                          >
-                            {saving ? 'Saving…' : 'Save changes'}
-                          </button>
-                        )}
-                      </div>
                     </div>
-                  </motion.div>
-                </>
+                  )}
+                </div>
               )}
-            </AnimatePresence>
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
-  );
-}
+            </>
+          )}
+        </div>
+        <div className="px-5 py-4 border-t border-slate-200 flex justify-between items-center">
+          <button
+            onClick={() => downloadImage(editingImage.url, editingImage.id)}
+            className="flex items-center gap-1.5 text-xs font-avenir text-slate-500 hover:text-slate-700"
+          >
+            <Download size={12} />
+            Download
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={closeEdit}
+              className="px-4 py-2 text-sm font-avenir text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              Cancel
+            </button>
+            {editingImage.source !== 'content' && (
+              <button
+                onClick={saveEdit}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-avenir text-white bg-slate-800 rounded-lg hover:bg-slate-900 disabled:opacity-50 transition-colors"
+              >
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  </AnimatePresence>,
+  document.body
+)}
