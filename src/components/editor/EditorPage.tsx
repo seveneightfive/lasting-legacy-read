@@ -44,6 +44,7 @@ export default function EditorPage() {
           .from('chapters')
           .select('*')
           .eq('book_id', bookData.id)
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('number', { ascending: true });
 
         if (chaptersError) throw chaptersError;
