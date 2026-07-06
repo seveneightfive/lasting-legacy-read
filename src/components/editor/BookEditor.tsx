@@ -199,6 +199,54 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     if (chapterIndex >= 0) setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
   }, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
 
+  const handleAddChapter = useCallback(async () => {
+    const nextNumber = chapters.length > 0 ? Math.max(...chapters.map((c) => c.number)) + 1 : 1;
+    const { data, error } = await supabase
+      .from('chapters')
+      .insert({ book_id: book.id, number: nextNumber, title: 'Untitled Chapter', is_deleted: false })
+      .select()
+      .single();
+    if (error || !data) {
+      console.error('Failed to add chapter:', error);
+      window.alert('Could not add a new chapter. Please try again.');
+      return;
+    }
+    void logRevision({ chapter_id: data.id, book_id: book.id, field: 'created', new_value: String(nextNumber) });
+    setChapters((prev) => [...prev, data]);
+    setCurrent({ kind: 'chapter-title', chapterIndex: chapters.length });
+  }, [chapters, book.id, logRevision]);
+
+  const handleDeleteChapter = useCallback(async (chapterId: number) => {
+    const chapter = chapters.find((c) => c.id === chapterId);
+    if (!chapter) return;
+    const label = chapter.title?.trim() || `Chapter ${chapter.number}`;
+    const ok = window.confirm(
+      `Delete "${label}"?\n\nThis chapter and all of its pages will be hidden from your story. This can be undone by your administrator if needed.`
+    );
+    if (!ok) return;
+
+    const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
+    if (dirty?.kind === 'chapter' && dirty.chapterId === chapterId) setDirty(null);
+    else await autosave.flush();
+
+    const { error } = await supabase.from('chapters').update({ is_deleted: true }).eq('id', chapterId);
+    if (error) {
+      console.error('Failed to delete chapter:', error);
+      window.alert('Could not delete this chapter. Please try again.');
+      return;
+    }
+    void logRevision({ chapter_id: chapterId, book_id: book.id, field: 'is_deleted', previous_value: 'false', new_value: 'true' });
+
+    setChapters((prev) => prev.filter((c) => c.id !== chapterId));
+    setPagesByChapter((prev) => { const next = new Map(prev); next.delete(chapterId); return next; });
+    setGalleryByChapter((prev) => { const next = new Map(prev); next.delete(chapterId); return next; });
+
+    // If we were viewing the deleted chapter (or a page inside it), bounce to Cover
+    if ((current.kind === 'chapter-title' || current.kind === 'page') && current.chapterIndex === chapterIndex) {
+      setCurrent({ kind: 'cover' });
+    }
+  }, [chapters, dirty, autosave, current, book.id, logRevision]);
+
   const handleMovePageToChapter = useCallback(async (
     pageId: number, fromChapterId: number, toChapterId: number, toIndex: number,
   ) => {
@@ -519,6 +567,8 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         onReorderPages={handleReorderPages}
         onMovePageToChapter={handleMovePageToChapter}
         onAddPage={handleAddPage}
+        onAddChapter={handleAddChapter}
+        onDeleteChapter={handleDeleteChapter}
       />
 
       {/* Photo library panel */}
