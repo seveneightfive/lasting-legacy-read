@@ -69,13 +69,15 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const hasIntro = hasContent(book.intro);
   const hasChapters = chapters.length > 0;
 
-  // Determines what color the BookCover's page-turn flip should land on,
-  // so the flip visually hands off into whatever screen comes next.
-  const firstChapterHasImage = Boolean(chapters[0]?.image_url);
-  const coverNextBg = hasDedication || hasIntro
-    ? '#f8fafc' // slate-50 — matches BookDedication and BookIntro backgrounds
+  // Determines what the BookCover's page-turn flip should land on,
+// so the flip visually hands off into whatever screen comes next.
+const firstChapterHasImage = Boolean(chapters[0]?.image_url);
+const coverNextBg = hasDedication
+  ? 'linear-gradient(to bottom right, #0f172a, #334155)' // matches BookDedication's right panel
+  : hasIntro
+    ? '#f8fafc' // slate-50 — matches BookIntro's background
     : firstChapterHasImage
-      ? '#0f172a' // dark tone, closer to ChapterTitle's image-backed variant
+      ? '#0f172a'
       : '#1e293b'; // matches ChapterTitle's plain (no image) background
 
   const { showPopup1, showPopup2, dismissPopup1, dismissPopup2 } = useMcFarlandPopups({
