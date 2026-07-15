@@ -27,12 +27,12 @@ import { CSS } from '@dnd-kit/utilities';
 import { TocNode, EditorState, stateKey } from '../../utils/editorState';
 import AddChapterModal, { NewChapterPayload } from './AddChapterModal';
 
-iinterface TableOfContentsProps {
+interface TableOfContentsProps {
   open: boolean;
   onClose: () => void;
   toc: TocNode[];
   currentState: EditorState;
-  bookSlug: string; // ← new
+  bookSlug: string;
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
   onReorderPages: (chapterId: number, fromIndex: number, toIndex: number) => void | Promise<void>;
@@ -42,19 +42,16 @@ iinterface TableOfContentsProps {
     toChapterId: number,
     toIndex: number,
   ) => void | Promise<void>;
-  onAddPage: (chapterId: number) => void | Promise<void>;
-  onAddChapter: (payload: NewChapterPayload) => void | Promise<void>; // ← changed signature
-  onDeleteChapter: (chapterId: number) => void | Promise<void>;
-}
   /**
    * Create a new page inside the given chapter. Should append the page to the
    * end of the chapter and navigate the editor to it.
    */
   onAddPage: (chapterId: number) => void | Promise<void>;
   /**
-   * Create a new chapter at the end of the book and navigate the editor to it.
+   * Create a new chapter. Opens a form for number/title/lede/image and
+   * navigates the editor to it once created.
    */
-  onAddChapter: () => void | Promise<void>;
+  onAddChapter: (payload: NewChapterPayload) => void | Promise<void>;
   /**
    * Delete (hide) a chapter and all of its pages.
    */
@@ -312,17 +309,17 @@ const suggestedChapterNumber = chapters.length > 0
                 </DragOverlay>
               </DndContext>
 
-              // The "Add Chapter" button — simplify since the modal now owns its own submitting state:
-<button
-  type="button"
-  onClick={() => setAddChapterOpen(true)}
-  className="w-full flex items-center gap-2 px-3 py-2 mt-4 rounded-lg text-left
-    font-avenir text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100
-    transition-colors"
->
-  <Plus size={14} className="shrink-0" />
-  <span>Add Chapter</span>
-</button>
+              {/* Add Chapter — opens the modal; it owns its own submitting state */}
+              <button
+                type="button"
+                onClick={() => setAddChapterOpen(true)}
+                className="w-full flex items-center gap-2 px-3 py-2 mt-4 rounded-lg text-left
+                  font-avenir text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100
+                  transition-colors"
+              >
+                <Plus size={14} className="shrink-0" />
+                <span>Add Chapter</span>
+              </button>
             </nav>
 
             <div className="px-5 py-3 border-t border-slate-200">
