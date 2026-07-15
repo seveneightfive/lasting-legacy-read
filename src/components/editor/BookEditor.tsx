@@ -35,10 +35,11 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
   const allStates = useMemo(() => flattenStates(toc), [toc]);
 
   useEffect(() => {
-    const firstChapter = chapters[0];
-    if (firstChapter && !pagesByChapter.has(firstChapter.id)) void loadPages(firstChapter.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  chapters.forEach((chapter) => {
+    if (!pagesByChapter.has(chapter.id)) void loadPages(chapter.id);
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 
   const loadPages = useCallback(async (chapterId: number) => {
     const { data, error } = await supabase
