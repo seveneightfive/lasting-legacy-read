@@ -319,7 +319,7 @@ export default function ChapterReader({
     <div className="fixed inset-0 flex bg-white">
 
       {/* LEFT: Image panel */}
-      <div className="w-[45%] h-screen flex flex-col bg-slate-50 overflow-hidden relative">
+      <div className="w-[45%] h-screen flex flex-col bg-white overflow-hidden relative">
         <div className="h-full flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
 
@@ -336,7 +336,7 @@ export default function ChapterReader({
       <img
         src={page.image_url}
         alt={page.image_caption || 'Chapter image'}
-        className="absolute inset-0 w-full h-full object-contain rounded-lg shadow-lg"
+        className="absolute inset-0 w-full h-full object-contain"
       />
     </div>
     {page.image_caption && (
@@ -359,7 +359,7 @@ export default function ChapterReader({
       <img
         src={pageImages[0].image_url}
         alt={pageImages[0].image_caption || ''}
-        className="absolute inset-0 w-full h-full object-contain rounded-lg shadow-lg"
+        className="absolute inset-0 w-full h-full object-contain"
       />
     </div>
     {pageImages[0].image_caption && (
