@@ -32,73 +32,75 @@ function BookPage() {
     }
   }, [slug]);
 
-  const fetchBookAndChapters = async (bookSlug: string) => {
-    try {
-      setLoading(true);
-      console.log('Fetching book with slug:', bookSlug);
+const fetchBookAndChapters = async (bookSlug: string) => {
+  try {
+    setLoading(true);
+    console.log('Fetching book with slug:', bookSlug);
 
-      // Fetch book
-      const { data: bookData, error: bookError } = await supabase
-        .from('books')
-        .select('*')
-        .eq('slug', bookSlug)
-        .maybeSingle();
+    // Fetch book
+    const { data: bookData, error: bookError } = await supabase
+      .from('books')
+      .select('*')
+      .eq('slug', bookSlug)
+      .maybeSingle();
 
-      if (bookError) {
-        console.error('Book fetch error:', bookError);
-        throw bookError;
-      }
-
-      if (!bookData) {
-        console.log('Book not found for slug:', bookSlug);
-        setBook(null);
-        setChapters([]);
-        return;
-      }
-
-      console.log('Book data:', bookData);
-      setBook(bookData);
-      trackView(bookSlug);
-
-      // Fetch chapters
-      const { data: chaptersData, error: chaptersError } = await supabase
-        .from('chapters')
-        .select('*')
-        .eq('book_id', bookData.id)
-        .order('number', { ascending: true });
-
-      if (chaptersError) {
-        console.error('Chapters fetch error:', chaptersError);
-        throw chaptersError;
-      }
-
-      console.log('Chapters data:', chaptersData);
-
-      // Filter chapters to only include those with at least one page
-      const chaptersWithPages = await Promise.all(
-        (chaptersData || []).map(async (chapter) => {
-          const { count } = await supabase
-            .from('pages')
-            .select('*', { count: 'exact', head: true })
-            .eq('chapter_id', chapter.id);
-          return { chapter, hasPages: (count || 0) > 0 };
-        })
-      );
-
-      const filteredChapters = chaptersWithPages
-        .filter(({ hasPages }) => hasPages)
-        .map(({ chapter }) => chapter);
-
-      console.log('Filtered chapters with pages:', filteredChapters);
-      setChapters(filteredChapters);
-
-    } catch (err) {
-      console.error('Error fetching book:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
+    if (bookError) {
+      console.error('Book fetch error:', bookError);
+      throw bookError;
     }
-  };
+
+    if (!bookData) {
+      console.log('Book not found for slug:', bookSlug);
+      setBook(null);
+      setChapters([]);
+      return;
+    }
+
+    console.log('Book data:', bookData);
+    setBook(bookData);
+    trackView(bookSlug);
+
+    // Fetch chapters — exclude soft-deleted rows
+    const { data: chaptersData, error: chaptersError } = await supabase
+      .from('chapters')
+      .select('*')
+      .eq('book_id', bookData.id)
+      .or('is_deleted.is.null,is_deleted.eq.false')
+      .order('number', { ascending: true });
+
+    if (chaptersError) {
+      console.error('Chapters fetch error:', chaptersError);
+      throw chaptersError;
+    }
+
+    console.log('Chapters data:', chaptersData);
+
+    // Filter chapters to only include those with at least one page
+    const chaptersWithPages = await Promise.all(
+      (chaptersData || []).map(async (chapter) => {
+        const { count } = await supabase
+          .from('pages')
+          .select('*', { count: 'exact', head: true })
+          .eq('chapter_id', chapter.id)
+          .or('is_deleted.is.null,is_deleted.eq.false');
+        return { chapter, hasPages: (count || 0) > 0 };
+      })
+    );
+
+    const filteredChapters = chaptersWithPages
+      .filter(({ hasPages }) => hasPages)
+      .map(({ chapter }) => chapter);
+
+    console.log('Filtered chapters with pages:', filteredChapters);
+    setChapters(filteredChapters);
+
+  } catch (err) {
+    console.error('Error fetching book:', err);
+    setError(err instanceof Error ? err.message : 'An error occurred');
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (loading) {
     return (
