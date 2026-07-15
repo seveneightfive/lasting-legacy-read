@@ -5,20 +5,22 @@ import { Book } from '../lib/supabase';
 interface BookCoverProps {
   book: Book;
   onNext: () => void;
-  /** Background color the page-turn flip should land on, matching whatever
-   * screen comes next (dedication, intro, or chapter-title). Defaults to
-   * slate-50, since most books have a dedication. */
+  /** CSS `background` value (color or gradient) the flip should land on,
+   * matching whatever screen comes next. Defaults to the dark gradient
+   * used by BookDedication's right panel, since most books have a dedication. */
   nextBackground?: string;
 }
 
-export default function BookCover({ book, onNext, nextBackground = '#f8fafc' }: BookCoverProps) {
+export default function BookCover({
+  book,
+  onNext,
+  nextBackground = 'linear-gradient(to bottom right, #0f172a, #334155)',
+}: BookCoverProps) {
   const [isTurning, setIsTurning] = useState(false);
 
   const handleBeginReading = () => {
     if (isTurning) return;
     setIsTurning(true);
-    // Fire onNext right as the flip finishes covering the right page,
-    // so the next screen is already mounted underneath by the time it's revealed.
     setTimeout(() => {
       onNext();
     }, 1000);
@@ -89,11 +91,11 @@ export default function BookCover({ book, onNext, nextBackground = '#f8fafc' }: 
             </motion.div>
           </div>
 
-          {/* Back face: matches the next screen's background for a seamless handoff */}
+          {/* Back face: matches the next screen's right-side color/gradient for a seamless handoff */}
           <div
             className="absolute inset-0"
             style={{
-              backgroundColor: nextBackground,
+              background: nextBackground,
               backfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
             }}
