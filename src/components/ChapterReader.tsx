@@ -324,62 +324,58 @@ export default function ChapterReader({
           <AnimatePresence mode="wait" initial={false}>
 
             {page.image_url ? (
-              <motion.div
-                key={`image-${pageNumber}`}
-                initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
-                transition={{ duration: 0.6, ease: 'easeInOut' }}
-                className="w-full h-full flex flex-col items-center justify-center px-12"
-              >
-                <div className="max-w-2xl w-full">
-                  <img
-                    src={page.image_url}
-                    alt={page.image_caption || 'Chapter image'}
-                    className="w-full rounded-lg shadow-lg object-contain max-h-[85vh]"
-                  />
-                  {page.image_caption && (
-                    <p className="text-sm text-slate-600 mt-4 italic font-lora text-center">
-                      {page.image_caption}
-                    </p>
-                  )}
-                </div>
-              </motion.div>
+  <motion.div
+    key={`image-${pageNumber}`}
+    initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
+    animate={{ x: 0, opacity: 1 }}
+    exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
+    transition={{ duration: 0.6, ease: 'easeInOut' }}
+    className="w-full h-full flex flex-col items-center justify-center p-8"
+  >
+    <img
+      src={page.image_url}
+      alt={page.image_caption || 'Chapter image'}
+      className="max-w-full max-h-[80vh] w-auto h-auto object-contain rounded-lg shadow-lg"
+    />
+    {page.image_caption && (
+      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center">
+        {page.image_caption}
+      </p>
+    )}
+  </motion.div>
 
-            ) : pageImages.length > 0 ? (
-              <motion.div
-                key={`gallery-${pageNumber}`}
-                initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
-                animate={{ x: 0, opacity: 1 }}
-                exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
-                transition={{ duration: 0.6, ease: 'easeInOut' }}
-                className="w-full h-full flex flex-col items-center justify-center px-12"
-              >
-                <div className="max-w-2xl w-full">
-                  <img
-                    src={pageImages[0].image_url}
-                    alt={pageImages[0].image_caption || ''}
-                    className="w-full rounded-lg shadow-lg object-contain max-h-[85vh]"
-                  />
-                  {pageImages[0].image_caption && (
-                    <p className="text-sm text-slate-600 mt-4 italic font-lora text-center">
-                      {pageImages[0].image_caption}
-                    </p>
-                  )}
-                  {pageImages.length > 1 && (
-                    <div className="flex gap-2 mt-4 justify-center">
-                      {pageImages.slice(1).map(img => (
-                        <img
-                          key={img.id}
-                          src={img.image_url}
-                          alt={img.image_caption || ''}
-                          className="w-20 h-20 object-cover rounded-md shadow-sm"
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
+) : pageImages.length > 0 ? (
+  <motion.div
+    key={`gallery-${pageNumber}`}
+    initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
+    animate={{ x: 0, opacity: 1 }}
+    exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
+    transition={{ duration: 0.6, ease: 'easeInOut' }}
+    className="w-full h-full flex flex-col items-center justify-center p-8"
+  >
+    <img
+      src={pageImages[0].image_url}
+      alt={pageImages[0].image_caption || ''}
+      className="max-w-full max-h-[80vh] w-auto h-auto object-contain rounded-lg shadow-lg"
+    />
+    {pageImages[0].image_caption && (
+      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center">
+        {pageImages[0].image_caption}
+      </p>
+    )}
+    {pageImages.length > 1 && (
+      <div className="flex gap-2 mt-4 justify-center">
+        {pageImages.slice(1).map(img => (
+          <img
+            key={img.id}
+            src={img.image_url}
+            alt={img.image_caption || ''}
+            className="w-20 h-20 object-cover rounded-md shadow-sm"
+          />
+        ))}
+      </div>
+    )}
+  </motion.div>
 
             ) : page.subtitle ? (
               <motion.div
