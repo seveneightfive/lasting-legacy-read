@@ -20,25 +20,24 @@ export default function BookDedication({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.8 }}
-      className="min-h-screen bg-slate-50 flex items-center justify-center p-8"
+      transition={{ duration: 0.6 }}
+      className="min-h-screen bg-slate-50 flex flex-col md:flex-row"
     >
-      <div className="max-w-3xl mx-auto w-full">
+      {/* Left page: dedication text */}
+      <div className="w-full md:w-1/2 min-h-[60vh] md:h-screen flex items-center justify-center px-8 md:px-16 py-16 md:py-0">
         <motion.div
           initial={{ y: 30, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3, duration: 0.8 }}
-          className="text-center"
+          transition={{ delay: 0.2, duration: 0.7 }}
+          className="max-w-md text-center"
         >
-          <h2 className="text-3xl md:text-4xl font-avenir text-slate-800 mb-12 heading-tracking">
+          <h2 className="text-2xl md:text-3xl font-avenir text-slate-800 mb-8 heading-tracking">
             Dedication
           </h2>
-
           <div
-  className="font-lora text-xl md:text-2xl text-slate-700 leading-relaxed italic mb-16"
-  dangerouslySetInnerHTML={{ __html: dedication || '' }}
-/>
-
+            className="font-lora text-lg md:text-xl text-slate-700 leading-relaxed italic mb-12"
+            dangerouslySetInnerHTML={{ __html: dedication || '' }}
+          />
           <div className="flex items-center justify-center gap-4">
             <motion.button
               onClick={onPrevious}
@@ -48,7 +47,6 @@ export default function BookDedication({
             >
               ← Back
             </motion.button>
-
             <motion.button
               onClick={onNext}
               whileHover={{ scale: 1.05 }}
@@ -60,6 +58,9 @@ export default function BookDedication({
           </div>
         </motion.div>
       </div>
+
+      {/* Right page: solid dark panel — echoes the cover's flip, hints at pages still ahead */}
+      <div className="hidden md:block w-1/2 h-screen bg-gradient-to-br from-slate-900 to-slate-700" />
     </motion.div>
   );
 }
