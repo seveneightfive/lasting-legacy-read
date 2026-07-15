@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Download, Search, Images } from 'lucide-react';
+import { X, Download, Search, Images, Crop } from 'lucide-react';
 import { supabase, Book, Chapter, Page, GalleryItem } from '../../lib/supabase';
 import { useImageUpload } from '../../hooks/useImageUpload';
+import CropModal from './CropModal';
 
 interface PhotoLibraryProps {
   open: boolean;
@@ -142,6 +143,34 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
       setLoading(false);
     }
   }, [book.id, chapters]);
+
+  // Add state:
+const [cropping, setCropping] = useState(false);
+
+const handleCropSave = async (blob: Blob) => {
+  if (!editingImage || editingImage.source === 'content') return;
+  const file = new File([blob], `cropped-${editingImage.id}.jpg`, { type: 'image/jpeg' });
+  const uploaded = await upload(file);
+  if (!uploaded) return;
+
+  const { error } =
+    editingImage.source === 'gallery'
+      ? await supabase.from('gallery').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id)
+      : await supabase.from('pages').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id);
+
+  if (error) {
+    setSaveError(error.message || 'Could not save the cropped photo.');
+    return;
+  }
+
+  setImages((prev) => prev.map((img) =>
+    img.id === editingImage.id && img.source === editingImage.source
+      ? { ...img, url: uploaded.publicUrl }
+      : img
+  ));
+  setEditingImage((prev) => (prev ? { ...prev, url: uploaded.publicUrl } : prev));
+  setCropping(false);
+};
 
   useEffect(() => {
     if (open) load();
@@ -461,6 +490,12 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                   onClick={closeEdit}
                   className="fixed inset-0 bg-black/40 z-[60]"
                 />
+                <CropModal
+  open={cropping && editingImage !== null}
+  imageUrl={editingImage?.url ?? ''}
+  onCancel={() => setCropping(false)}
+  onSave={handleCropSave}
+/>
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none">
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -477,16 +512,22 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                     </div>
                     <div className="p-5 space-y-4">
                       <img
-                        src={editingImage.url}
-                        alt=""
-                        className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
-                      />
+  src={editingImage.url}
+  alt=""
+  className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
+/>
 
-                      {editingImage.source === 'content' && (
-                        <div className="px-3 py-2 text-xs font-avenir text-blue-700 bg-blue-50 border border-blue-200 rounded-lg">
-                          This image is embedded inside page content. To edit its caption, open the page in the editor and update the figure caption directly.
-                        </div>
-                      )}
+{editingImage.source !== 'content' && (
+  <button
+    type="button"
+    onClick={() => setCropping(true)}
+    className="flex items-center justify-center gap-1.5 w-full px-3 py-2 text-xs font-avenir font-semibold
+      text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors"
+  >
+    <Crop size={13} />
+    Crop / rotate this photo
+  </button>
+)}
 
                       {saveError && (
                         <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">

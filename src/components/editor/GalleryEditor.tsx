@@ -1,7 +1,8 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { Plus, X, ArrowLeft, ArrowRight, Loader2, ImageIcon } from 'lucide-react';
+import { Plus, X, ArrowLeft, ArrowRight, Loader2, ImageIcon, Crop } from 'lucide-react';
 import { supabase, GalleryItem } from '../../lib/supabase';
 import { useImageUpload } from '../../hooks/useImageUpload';
+import CropModal from './CropModal';
 
 interface GalleryEditorProps {
   /** Page being edited (gallery items have page_id === pageId) */
@@ -22,6 +23,7 @@ interface GalleryEditorProps {
  * - Remove: delete row (storage object kept — same reasoning as for image_url)
  * - Reorder: shift left/right (writes new sort_order to all affected rows)
  * - Caption: inline edit, debounced save
+ * - Crop/rotate: opens CropModal, re-uploads result, updates image_url in place
  */
 export default function GalleryEditor({
   pageId, chapterId, bookSlug, initialItems, onChanged,
@@ -37,24 +39,46 @@ export default function GalleryEditor({
   }, [pageId, chapterId, initialItems]);
 
   const refresh = useCallback(async () => {
-  let query = supabase
-    .from('gallery')
-    .select('*')
-    .eq('chapter_id', chapterId)
-    .order('sort_order', { ascending: true });
+    let query = supabase
+      .from('gallery')
+      .select('*')
+      .eq('chapter_id', chapterId)
+      .order('sort_order', { ascending: true });
 
-  if (pageId === null) {
-    query = query.is('page_id', null);
-  } else {
-    query = query.eq('page_id', pageId);
-  }
+    if (pageId === null) {
+      query = query.is('page_id', null);
+    } else {
+      query = query.eq('page_id', pageId);
+    }
 
-  const { data, error: err } = await query;
-  if (!err && data) {
-    setItems(data);
-    onChanged?.();
-  }
-}, [pageId, chapterId, onChanged]);
+    const { data, error: err } = await query;
+    if (!err && data) {
+      setItems(data);
+      onChanged?.();
+    }
+  }, [pageId, chapterId, onChanged]);
+
+  // ── Crop ─────────────────────────────────────────────────────
+  const [cropTarget, setCropTarget] = useState<GalleryItem | null>(null);
+
+  const handleCropSave = async (blob: Blob) => {
+    if (!cropTarget) return;
+    const file = new File([blob], `cropped-${cropTarget.id}.jpg`, { type: 'image/jpeg' });
+    const uploaded = await upload(file);
+    if (!uploaded) return;
+
+    const { error: updateErr } = await supabase
+      .from('gallery')
+      .update({ image_url: uploaded.publicUrl })
+      .eq('id', cropTarget.id);
+
+    if (updateErr) {
+      console.error('Failed to save cropped image:', updateErr);
+      return;
+    }
+    setCropTarget(null);
+    await refresh();
+  };
 
   // ── Add ───────────────────────────────────────────────────────
   const handleAddClick = () => fileInputRef.current?.click();
@@ -148,11 +172,11 @@ export default function GalleryEditor({
       </div>
 
       {pageId === null && (
-  <p className="mb-3 text-xs font-avenir text-slate-400">
-    Photos here float at the chapter level — not tied to any specific page.
-    They appear in the chapter gallery in the reader.
-  </p>
-)}
+        <p className="mb-3 text-xs font-avenir text-slate-400">
+          Photos here float at the chapter level — not tied to any specific page.
+          They appear in the chapter gallery in the reader.
+        </p>
+      )}
 
       {error && (
         <div className="mb-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
@@ -175,8 +199,8 @@ export default function GalleryEditor({
           <ImageIcon size={24} className="text-slate-400" />
           <span className="text-sm font-avenir text-slate-600">
             {pageId === null
-  ? 'No chapter gallery photos yet. Click to add one.'
-  : 'No gallery photos yet. Click to add one.'}
+              ? 'No chapter gallery photos yet. Click to add one.'
+              : 'No gallery photos yet. Click to add one.'}
           </span>
         </button>
       ) : (
@@ -199,6 +223,15 @@ export default function GalleryEditor({
                     aria-label="Move left"
                   >
                     <ArrowLeft size={14} className="text-slate-700" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCropTarget(item)}
+                    className="p-1.5 bg-white rounded-full shadow"
+                    aria-label="Crop or rotate"
+                    title="Crop / rotate"
+                  >
+                    <Crop size={14} className="text-slate-700" />
                   </button>
                   <button
                     type="button"
@@ -244,6 +277,14 @@ export default function GalleryEditor({
         accept="image/jpeg,image/png,image/webp,image/gif"
         onChange={onFileChange}
         className="hidden"
+      />
+
+      <CropModal
+        open={cropTarget !== null}
+        imageUrl={cropTarget?.image_url ?? ''}
+        aspect={4 / 3}
+        onCancel={() => setCropTarget(null)}
+        onSave={handleCropSave}
       />
     </div>
   );
