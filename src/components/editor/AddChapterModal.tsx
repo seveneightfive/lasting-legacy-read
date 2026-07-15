@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Loader2, ImageIcon } from 'lucide-react';
-import { TextField } from './FormFields';
+import { TextField } from './formFields';
 import { useImageUpload } from '../../hooks/useImageUpload';
 
 export interface NewChapterPayload {
