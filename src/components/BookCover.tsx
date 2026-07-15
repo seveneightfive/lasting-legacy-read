@@ -5,17 +5,20 @@ import { Book } from '../lib/supabase';
 interface BookCoverProps {
   book: Book;
   onNext: () => void;
+  /** Background color the page-turn flip should land on, matching whatever
+   * screen comes next (dedication, intro, or chapter-title). Defaults to
+   * slate-50, since most books have a dedication. */
+  nextBackground?: string;
 }
 
-export default function BookCover({ book, onNext }: BookCoverProps) {
+export default function BookCover({ book, onNext, nextBackground = '#f8fafc' }: BookCoverProps) {
   const [isTurning, setIsTurning] = useState(false);
 
   const handleBeginReading = () => {
     if (isTurning) return;
     setIsTurning(true);
-    // Let the page-turn play out fully before handing off to the real
-    // next screen — the flip's "back" already shows the dedication,
-    // so the handoff should read as seamless.
+    // Fire onNext right as the flip finishes covering the right page,
+    // so the next screen is already mounted underneath by the time it's revealed.
     setTimeout(() => {
       onNext();
     }, 1000);
@@ -41,11 +44,10 @@ export default function BookCover({ book, onNext }: BookCoverProps) {
             className="absolute inset-0 w-full h-full object-cover"
           />
         )}
-        {/* subtle spine shadow where the two pages meet */}
         <div className="hidden md:block absolute top-0 right-0 h-full w-8 bg-gradient-to-l from-black/30 to-transparent pointer-events-none" />
       </div>
 
-      {/* Right page: flips to reveal the dedication */}
+      {/* Right page: flips to hand off into whatever screen comes next */}
       <div
         className="relative w-full flex-1 md:w-1/2 md:h-screen"
         style={{ perspective: 2200 }}
@@ -87,23 +89,15 @@ export default function BookCover({ book, onNext }: BookCoverProps) {
             </motion.div>
           </div>
 
-          {/* Back face: dedication, revealed as the page flips over */}
+          {/* Back face: matches the next screen's background for a seamless handoff */}
           <div
-            className="absolute inset-0 flex items-center justify-center px-8 md:px-16 bg-[#f8f5ee]"
+            className="absolute inset-0"
             style={{
+              backgroundColor: nextBackground,
               backfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
             }}
-          >
-            <div className="text-center max-w-md">
-              <p className="text-sm uppercase tracking-widest text-slate-500 mb-4 font-avenir">
-                Dedication
-              </p>
-              <p className="text-2xl md:text-3xl font-lora italic text-slate-800 leading-relaxed">
-                {book.dedication || 'For those who came before, and those who will come after.'}
-              </p>
-            </div>
-          </div>
+          />
         </motion.div>
       </div>
     </motion.div>
