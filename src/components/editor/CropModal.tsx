@@ -1,14 +1,27 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Cropper, { Area } from 'react-easy-crop';
 import { X, RotateCcw, RotateCw, Loader2 } from 'lucide-react';
 import { getCroppedImageBlob } from '../../utils/cropImage';
 
+interface AspectPreset {
+  label: string;
+  value: number | undefined; // undefined = freeform
+}
+
+const ASPECT_PRESETS: AspectPreset[] = [
+  { label: 'Free', value: undefined },
+  { label: '3:4', value: 3 / 4 },   // portrait — matches book page proportions
+  { label: '2:3', value: 2 / 3 },   // portrait — classic photo print ratio
+  { label: '4:3', value: 4 / 3 },   // landscape — matches gallery grid cells
+  { label: '1:1', value: 1 },
+];
+
 interface CropModalProps {
   open: boolean;
   imageUrl: string;
-  /** Locks the crop box to a ratio (e.g. 4/3). Pass undefined for freeform. */
+  /** Initial aspect ratio (width / height). Pass undefined to start freeform. */
   aspect?: number;
   onCancel: () => void;
   /** Receives the cropped image as a Blob — caller handles upload + row update. */
@@ -19,9 +32,15 @@ export default function CropModal({ open, imageUrl, aspect, onCancel, onSave }: 
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
+  const [selectedAspect, setSelectedAspect] = useState<number | undefined>(aspect);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reset to the caller's default aspect each time the modal is (re)opened for a new image
+  useEffect(() => {
+    if (open) setSelectedAspect(aspect);
+  }, [open, aspect, imageUrl]);
 
   const onCropComplete = useCallback((_area: Area, areaPixels: Area) => {
     setCroppedAreaPixels(areaPixels);
@@ -82,6 +101,28 @@ export default function CropModal({ open, imageUrl, aspect, onCancel, onSave }: 
             </button>
           </div>
 
+          {/* Aspect ratio picker */}
+          <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-2 shrink-0">
+            <span className="text-xs font-avenir text-slate-500 mr-1">Shape</span>
+            {ASPECT_PRESETS.map((preset) => {
+              const isActive = selectedAspect === preset.value;
+              return (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => setSelectedAspect(preset.value)}
+                  className={`px-3 py-1 text-xs font-avenir rounded-full border transition-colors ${
+                    isActive
+                      ? 'bg-slate-800 text-white border-slate-800'
+                      : 'bg-white text-slate-600 border-slate-300 hover:border-slate-500'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Crop stage */}
           <div className="relative w-full h-[420px] bg-slate-900 shrink-0">
             <Cropper
@@ -89,7 +130,7 @@ export default function CropModal({ open, imageUrl, aspect, onCancel, onSave }: 
               crop={crop}
               zoom={zoom}
               rotation={rotation}
-              aspect={aspect}
+              aspect={selectedAspect}
               onCropChange={setCrop}
               onZoomChange={setZoom}
               onRotationChange={setRotation}
