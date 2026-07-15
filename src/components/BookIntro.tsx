@@ -21,10 +21,10 @@ export default function BookIntro({
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 100 }}
-      animate={{ opacity: 1, x: 0 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
       exit={{ opacity: 0, x: -100 }}
-      transition={{ duration: 0.6 }}
+      transition={{ duration: 0.5 }}
       className="min-h-screen bg-slate-50 flex items-center justify-center p-8"
     >
       <div className={hasImage ? 'max-w-6xl w-full mx-auto' : 'max-w-3xl mx-auto'}>
@@ -48,7 +48,6 @@ export default function BookIntro({
                   </figcaption>
                 )}
               </figure>
-
               {/* Right: heading + intro text */}
               <div>
                 <h2 className="text-3xl font-avenir text-slate-800 mb-8 heading-tracking">
@@ -73,7 +72,6 @@ export default function BookIntro({
               </div>
             </>
           )}
-
           <div className="flex justify-between">
             <button
               onClick={onPrevious}
