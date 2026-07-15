@@ -221,12 +221,12 @@ export default function TableOfContents({
           />
 
           <motion.aside
-            initial={{ x: -320 }}
-            animate={{ x: 0 }}
-            exit={{ x: -320 }}
-            transition={{ type: 'tween', duration: 0.25 }}
-            className="fixed top-0 left-0 bottom-0 w-[300px] bg-white shadow-2xl z-40 flex flex-col"
-          >
+  initial={{ x: '-100%' }}
+  animate={{ x: 0 }}
+  exit={{ x: '-100%' }}
+  transition={{ type: 'tween', duration: 0.25 }}
+  className="fixed top-0 left-0 bottom-0 w-full md:w-[420px] lg:w-[460px] bg-white shadow-2xl z-40 flex flex-col"
+>
             <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
               <h2 className="font-avenir text-slate-800 text-sm uppercase tracking-wider">
                 Table of Contents
@@ -366,7 +366,7 @@ function ChapterBlock({
           type="button"
           onClick={onToggleCollapsed}
           className={`p-2 shrink-0 transition-colors
-            ${chapterActive ? 'text-slate-300 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}
+            ${chapterActive ? 'text-slate-200 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}
           aria-label={isCollapsed ? `Expand ${node.chapter.title}` : `Collapse ${node.chapter.title}`}
           aria-expanded={!isCollapsed}
         >
@@ -396,7 +396,7 @@ function ChapterBlock({
           }}
           className={`p-1 mr-1.5 shrink-0 opacity-0 group-hover/chapter:opacity-100 focus:opacity-100
             transition-opacity
-            ${chapterActive ? 'text-slate-300 hover:text-red-300' : 'text-slate-300 hover:text-red-600'}`}
+            ${chapterActive ? 'text-slate-300 hover:text-red-300' : 'text-slate-500 hover:text-red-600'}`}
           aria-label={`Delete ${node.chapter.title}`}
           title="Delete chapter"
         >
@@ -544,7 +544,7 @@ function SortablePageRow({
           e.stopPropagation();
           void onDeletePage(page.page.id, chapterId);
         }}
-        className="p-1 text-slate-300 hover:text-red-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+        className="p-1 text-slate-500 hover:text-red-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
         aria-label="Delete page"
         title="Delete page"
       >
