@@ -13,6 +13,7 @@ import ChapterTitleEditView from './ChapterTitleEditView';
 import PageEditView from './PageEditView';
 import PhotoLibrary from './PhotoLibrary';
 import { sortPagesForDisplay, effectiveOrder } from '../../utils/pageOrder';
+import { NewChapterPayload } from './AddChapterModal';
 
 interface BookEditorProps {
   book: Book;
@@ -200,22 +201,40 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
     if (chapterIndex >= 0) setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
   }, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
 
-  const handleAddChapter = useCallback(async () => {
-    const nextNumber = chapters.length > 0 ? Math.max(...chapters.map((c) => c.number)) + 1 : 1;
-    const { data, error } = await supabase
-      .from('chapters')
-      .insert({ book_id: book.id, number: nextNumber, title: 'Untitled Chapter', is_deleted: false })
-      .select()
-      .single();
-    if (error || !data) {
-      console.error('Failed to add chapter:', error);
-      window.alert('Could not add a new chapter. Please try again.');
-      return;
-    }
-    void logRevision({ chapter_id: data.id, book_id: book.id, field: 'created', new_value: String(nextNumber) });
-    setChapters((prev) => [...prev, data]);
-    setCurrent({ kind: 'chapter-title', chapterIndex: chapters.length });
-  }, [chapters, book.id, logRevision]);
+const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
+  const { data, error } = await supabase
+    .from('chapters')
+    .insert({
+      book_id: book.id,
+      number: payload.number,
+      title: payload.title,
+      lede: payload.lede || null,
+      image_url: payload.imageUrl,
+      is_deleted: false,
+    })
+    .select()
+    .single();
+
+  if (error || !data) {
+    console.error('Failed to add chapter:', error);
+    // Surface the real Supabase error instead of a generic message —
+    // this is what should reveal what's actually blocking the insert.
+    throw new Error(error?.message || 'Could not add a new chapter. Please try again.');
+  }
+
+  void logRevision({
+    chapter_id: data.id,
+    book_id: book.id,
+    field: 'created',
+    new_value: String(payload.number),
+  });
+
+  const nextChapters = [...chapters, data].sort((a, b) => a.number - b.number);
+  setChapters(nextChapters);
+
+  const newIndex = nextChapters.findIndex((c) => c.id === data.id);
+  if (newIndex >= 0) setCurrent({ kind: 'chapter-title', chapterIndex: newIndex });
+}, [chapters, book.id, logRevision]);
 
   const handleDeleteChapter = useCallback(async (chapterId: number) => {
     const chapter = chapters.find((c) => c.id === chapterId);
@@ -563,6 +582,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
         onClose={() => setTocOpen(false)}
         toc={toc}
         currentState={current}
+        bookSlug={book.slug}
         onNavigate={(s) => setCurrent(s)}
         onDeletePage={handleDeletePage}
         onReorderPages={handleReorderPages}
