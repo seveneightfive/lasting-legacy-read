@@ -25,12 +25,14 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TocNode, EditorState, stateKey } from '../../utils/editorState';
+import AddChapterModal, { NewChapterPayload } from './AddChapterModal';
 
-interface TableOfContentsProps {
+iinterface TableOfContentsProps {
   open: boolean;
   onClose: () => void;
   toc: TocNode[];
   currentState: EditorState;
+  bookSlug: string; // ← new
   onNavigate: (state: EditorState) => void;
   onDeletePage: (pageId: number, chapterId: number) => void | Promise<void>;
   onReorderPages: (chapterId: number, fromIndex: number, toIndex: number) => void | Promise<void>;
@@ -40,6 +42,10 @@ interface TableOfContentsProps {
     toChapterId: number,
     toIndex: number,
   ) => void | Promise<void>;
+  onAddPage: (chapterId: number) => void | Promise<void>;
+  onAddChapter: (payload: NewChapterPayload) => void | Promise<void>; // ← changed signature
+  onDeleteChapter: (chapterId: number) => void | Promise<void>;
+}
   /**
    * Create a new page inside the given chapter. Should append the page to the
    * end of the chapter and navigate the editor to it.
@@ -64,7 +70,7 @@ const isChapterDropId = (id: UniqueIdentifier) => String(id).startsWith(CHAPTER_
 const parseChapterDropId = (id: UniqueIdentifier) => Number(String(id).slice(CHAPTER_DROP_PREFIX.length));
 
 export default function TableOfContents({
-  open, onClose, toc, currentState, onNavigate,
+  open, onClose, toc, currentState, bookSlug, onNavigate,
   onDeletePage, onReorderPages, onMovePageToChapter, onAddPage,
   onAddChapter, onDeleteChapter,
 }: TableOfContentsProps) {
@@ -101,7 +107,10 @@ export default function TableOfContents({
   const [activeId, setActiveId] = useState<number | null>(null);
   const [overChapterId, setOverChapterId] = useState<number | null>(null);
   const [pendingChapterId, setPendingChapterId] = useState<number | null>(null);
-  const [isAddingChapter, setIsAddingChapter] = useState(false);
+  const [addChapterOpen, setAddChapterOpen] = useState(false);
+const suggestedChapterNumber = chapters.length > 0
+  ? Math.max(...chapters.map((c) => c.chapter.number)) + 1
+  : 1;
   const [collapsedChapters, setCollapsedChapters] = useState<Set<number>>(new Set());
 
   const activeLocation = activeId != null ? findPageLocation(activeId) : null;
@@ -121,15 +130,10 @@ export default function TableOfContents({
     }
   };
 
-  const handleAddChapter = async () => {
-    if (isAddingChapter) return;
-    setIsAddingChapter(true);
-    try {
-      await onAddChapter();
-    } finally {
-      setIsAddingChapter(false);
-    }
-  };
+  const handleSubmitNewChapter = async (payload: NewChapterPayload) => {
+  await onAddChapter(payload);
+  setAddChapterOpen(false);
+};
 
   const toggleCollapsed = (chapterId: number) => {
     setCollapsedChapters((prev) => {
@@ -308,17 +312,17 @@ export default function TableOfContents({
                 </DragOverlay>
               </DndContext>
 
-              <button
-                type="button"
-                onClick={handleAddChapter}
-                disabled={isAddingChapter}
-                className="w-full flex items-center gap-2 px-3 py-2 mt-4 rounded-lg text-left
-                  font-avenir text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100
-                  transition-colors disabled:opacity-50 disabled:cursor-wait"
-              >
-                <Plus size={14} className="shrink-0" />
-                <span>{isAddingChapter ? 'Adding…' : 'Add Chapter'}</span>
-              </button>
+              // The "Add Chapter" button — simplify since the modal now owns its own submitting state:
+<button
+  type="button"
+  onClick={() => setAddChapterOpen(true)}
+  className="w-full flex items-center gap-2 px-3 py-2 mt-4 rounded-lg text-left
+    font-avenir text-sm text-slate-500 hover:text-slate-800 hover:bg-slate-100
+    transition-colors"
+>
+  <Plus size={14} className="shrink-0" />
+  <span>Add Chapter</span>
+</button>
             </nav>
 
             <div className="px-5 py-3 border-t border-slate-200">
@@ -327,6 +331,13 @@ export default function TableOfContents({
               </p>
             </div>
           </motion.aside>
+          <AddChapterModal
+  open={addChapterOpen}
+  suggestedNumber={suggestedChapterNumber}
+  bookSlug={bookSlug}
+  onCancel={() => setAddChapterOpen(false)}
+  onSubmit={handleSubmitNewChapter}
+/>
         </>
       )}
     </AnimatePresence>
