@@ -332,13 +332,15 @@ export default function ChapterReader({
     transition={{ duration: 0.6, ease: 'easeInOut' }}
     className="w-full h-full flex flex-col items-center justify-center p-8"
   >
-    <img
-      src={page.image_url}
-      alt={page.image_caption || 'Chapter image'}
-      className="max-w-full max-h-[80vh] w-auto h-auto object-contain rounded-lg shadow-lg"
-    />
+    <div className="relative w-full flex-1 min-h-0">
+      <img
+        src={page.image_url}
+        alt={page.image_caption || 'Chapter image'}
+        className="absolute inset-0 w-full h-full object-contain rounded-lg shadow-lg"
+      />
+    </div>
     {page.image_caption && (
-      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center">
+      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">
         {page.image_caption}
       </p>
     )}
@@ -353,18 +355,20 @@ export default function ChapterReader({
     transition={{ duration: 0.6, ease: 'easeInOut' }}
     className="w-full h-full flex flex-col items-center justify-center p-8"
   >
-    <img
-      src={pageImages[0].image_url}
-      alt={pageImages[0].image_caption || ''}
-      className="max-w-full max-h-[80vh] w-auto h-auto object-contain rounded-lg shadow-lg"
-    />
+    <div className="relative w-full flex-1 min-h-0">
+      <img
+        src={pageImages[0].image_url}
+        alt={pageImages[0].image_caption || ''}
+        className="absolute inset-0 w-full h-full object-contain rounded-lg shadow-lg"
+      />
+    </div>
     {pageImages[0].image_caption && (
-      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center">
+      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">
         {pageImages[0].image_caption}
       </p>
     )}
     {pageImages.length > 1 && (
-      <div className="flex gap-2 mt-4 justify-center">
+      <div className="flex gap-2 mt-4 justify-center shrink-0">
         {pageImages.slice(1).map(img => (
           <img
             key={img.id}
