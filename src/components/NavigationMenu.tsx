@@ -330,9 +330,6 @@ export default function NavigationMenu({
                             <div className="font-avenir">
                               <div className="text-xs opacity-75 mb-1">Chapter {chapter.number}</div>
                               <div className="font-medium">{chapter.title}</div>
-                              {chapter.lede && (
-                                <div className="text-xs opacity-75 mt-1">{chapter.lede}</div>
-                              )}
                             </div>
                           </button>
                         </div>
