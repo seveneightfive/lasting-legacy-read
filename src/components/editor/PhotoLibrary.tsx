@@ -13,9 +13,11 @@ interface PhotoLibraryProps {
   chapters: Chapter[];
 }
 
+type ImageSource = 'page' | 'gallery' | 'content' | 'book' | 'chapter';
+
 interface LibraryImage {
   id: number;
-  source: 'page' | 'gallery' | 'content';
+  source: ImageSource;
   url: string;
   caption: string;
   chapterId: number;
@@ -24,7 +26,7 @@ interface LibraryImage {
   pageLabel: string;
 }
 
-// Extract <figure> images from rich-text HTML content
+// Extract <img> images (optionally wrapped in <figure>) from rich-text HTML content
 function extractContentImages(
   html: string,
   pageId: number,
@@ -33,21 +35,21 @@ function extractContentImages(
   pageLabel: string
 ): LibraryImage[] {
   const results: LibraryImage[] = [];
-  const figureRegex = /<figure[^>]*>([\s\S]*?)<\/figure>/gi;
-  let figIdx = 0;
-  let match;
-  while ((match = figureRegex.exec(html)) !== null) {
-    const figHtml = match[1];
-    const imgMatch = figHtml.match(/<img[^>]+src="([^"]+)"/i);
-    const capMatch = figHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
-    const src = imgMatch?.[1];
-    if (!src) continue;
-    const caption = capMatch
-      ? capMatch[1].replace(/<[^>]+>/g, '').trim()
-      : '';
-    // Use a synthetic unique id: negative number combining pageId + figure index
+  if (typeof DOMParser === 'undefined') return results;
+
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const imgs = doc.querySelectorAll('img');
+
+  imgs.forEach((img, idx) => {
+    const src = img.getAttribute('src') || img.getAttribute('data-src');
+    if (!src) return;
+
+    const figure = img.closest('figure');
+    const figcaption = figure?.querySelector('figcaption');
+    const caption = figcaption?.textContent?.trim() ?? '';
+
     results.push({
-      id: -(pageId * 1000 + figIdx),
+      id: -(pageId * 1000 + idx),
       source: 'content',
       url: src,
       caption,
@@ -56,10 +58,16 @@ function extractContentImages(
       pageId,
       pageLabel,
     });
-    figIdx++;
-  }
+  });
+
   return results;
 }
+
+// Reserved synthetic ids for the single book-level images so they don't collide
+// with real row ids from pages/gallery.
+const BOOK_COVER_ID = -1;
+const BOOK_INTRO_ID = -2;
+const CHAPTER_HEADER_ID_OFFSET = -1000000; // chapterId gets subtracted from this
 
 export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLibraryProps) {
   const [images, setImages] = useState<LibraryImage[]>([]);
@@ -95,6 +103,50 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
 
       const all: LibraryImage[] = [];
 
+      // 0a. Book cover photo
+      if (book.image_url) {
+        all.push({
+          id: BOOK_COVER_ID,
+          source: 'book',
+          url: book.image_url,
+          caption: '',
+          chapterId: 0,
+          chapterName: 'Book',
+          pageId: null,
+          pageLabel: 'Cover photo',
+        });
+      }
+
+      // 0b. Book intro photo
+      if (book.intro_image_url) {
+        all.push({
+          id: BOOK_INTRO_ID,
+          source: 'book',
+          url: book.intro_image_url,
+          caption: book.intro_image_caption ?? '',
+          chapterId: 0,
+          chapterName: 'Book',
+          pageId: null,
+          pageLabel: 'Intro photo',
+        });
+      }
+
+      // 0c. Chapter header images
+      chapters.forEach((c) => {
+        if (c.image_url) {
+          all.push({
+            id: CHAPTER_HEADER_ID_OFFSET - c.id,
+            source: 'chapter',
+            url: c.image_url,
+            caption: '',
+            chapterId: c.id,
+            chapterName: chapterMap.get(c.id) ?? 'Unknown',
+            pageId: null,
+            pageLabel: 'Chapter header',
+          });
+        }
+      });
+
       // 1. page.image_url
       (pagesData ?? []).filter((p) => p.image_url).forEach((p) => {
         all.push({
@@ -124,9 +176,9 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
         });
       });
 
-      // 3. <figure> images embedded inside page.content HTML
+      // 3. <figure>/<img> images embedded inside page.content HTML
       (pagesData ?? [])
-        .filter((p) => p.content?.includes('<figure'))
+        .filter((p) => p.content?.includes('<img'))
         .forEach((p) => {
           const embedded = extractContentImages(
             p.content!,
@@ -142,35 +194,48 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     } finally {
       setLoading(false);
     }
-  }, [book.id, chapters]);
+  }, [book.id, book.image_url, book.intro_image_url, book.intro_image_caption, chapters]);
 
-  // Add state:
-const [cropping, setCropping] = useState(false);
+  const [cropping, setCropping] = useState(false);
 
-const handleCropSave = async (blob: Blob) => {
-  if (!editingImage || editingImage.source === 'content') return;
-  const file = new File([blob], `cropped-${editingImage.id}.jpg`, { type: 'image/jpeg' });
-  const uploaded = await upload(file);
-  if (!uploaded) return;
+  const handleCropSave = async (blob: Blob) => {
+    if (!editingImage || editingImage.source === 'content') return;
+    const file = new File([blob], `cropped-${Math.abs(editingImage.id)}.jpg`, { type: 'image/jpeg' });
+    const uploaded = await upload(file);
+    if (!uploaded) return;
 
-  const { error } =
-    editingImage.source === 'gallery'
-      ? await supabase.from('gallery').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id)
-      : await supabase.from('pages').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id);
+    let error: { message?: string } | null = null;
 
-  if (error) {
-    setSaveError(error.message || 'Could not save the cropped photo.');
-    return;
-  }
+    if (editingImage.source === 'gallery') {
+      ({ error } = await supabase.from('gallery').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id));
+    } else if (editingImage.source === 'page') {
+      ({ error } = await supabase.from('pages').update({ image_url: uploaded.publicUrl }).eq('id', editingImage.id));
+    } else if (editingImage.source === 'book') {
+      const isIntro = editingImage.id === BOOK_INTRO_ID;
+      ({ error } = await supabase
+        .from('books')
+        .update(isIntro ? { intro_image_url: uploaded.publicUrl } : { image_url: uploaded.publicUrl })
+        .eq('id', book.id));
+    } else if (editingImage.source === 'chapter') {
+      ({ error } = await supabase
+        .from('chapters')
+        .update({ image_url: uploaded.publicUrl })
+        .eq('id', editingImage.chapterId));
+    }
 
-  setImages((prev) => prev.map((img) =>
-    img.id === editingImage.id && img.source === editingImage.source
-      ? { ...img, url: uploaded.publicUrl }
-      : img
-  ));
-  setEditingImage((prev) => (prev ? { ...prev, url: uploaded.publicUrl } : prev));
-  setCropping(false);
-};
+    if (error) {
+      setSaveError(error.message || 'Could not save the cropped photo.');
+      return;
+    }
+
+    setImages((prev) => prev.map((img) =>
+      img.id === editingImage.id && img.source === editingImage.source
+        ? { ...img, url: uploaded.publicUrl }
+        : img
+    ));
+    setEditingImage((prev) => (prev ? { ...prev, url: uploaded.publicUrl } : prev));
+    setCropping(false);
+  };
 
   useEffect(() => {
     if (open) load();
@@ -189,6 +254,7 @@ const handleCropSave = async (blob: Blob) => {
     page: images.filter((i) => i.source === 'page').length,
     gallery: images.filter((i) => i.source === 'gallery').length,
     content: images.filter((i) => i.source === 'content').length,
+    bookAndChapter: images.filter((i) => i.source === 'book' || i.source === 'chapter').length,
     captioned: images.filter((i) => i.caption.trim()).length,
   };
 
@@ -208,18 +274,51 @@ const handleCropSave = async (blob: Blob) => {
     setEditPageId('');
     setSaveError(null);
     setPromoteError(null);
+    setCropping(false);
   };
 
   const saveEdit = async () => {
     if (!editingImage) return;
+
     // Content-embedded images can't be edited here (they live inside HTML)
     if (editingImage.source === 'content') {
       setSaveError('This image is embedded in page content. Edit its caption in the page editor.');
       return;
     }
+
     setSaving(true);
     setSaveError(null);
     try {
+      // Book cover / intro photo — no chapter/page reassignment applies.
+      if (editingImage.source === 'book') {
+        const isIntro = editingImage.id === BOOK_INTRO_ID;
+        if (isIntro) {
+          const { error } = await supabase
+            .from('books')
+            .update({ intro_image_caption: editCaption || null })
+            .eq('id', book.id);
+          if (error) {
+            setSaveError(error.message || 'Something went wrong saving this photo.');
+            return;
+          }
+        }
+        // The cover photo has no caption field in the schema — nothing else to save.
+        setImages((prev) => prev.map((img) =>
+          img.id === editingImage.id && img.source === 'book'
+            ? { ...img, caption: editCaption }
+            : img
+        ));
+        closeEdit();
+        return;
+      }
+
+      // Chapter header image — no caption field in the schema, nothing to save
+      // beyond a crop (handled separately in handleCropSave).
+      if (editingImage.source === 'chapter') {
+        closeEdit();
+        return;
+      }
+
       const chapterId = parseInt(editChapterId) || editingImage.chapterId;
       const pageId = editPageId ? parseInt(editPageId) : null;
 
@@ -311,7 +410,7 @@ const handleCropSave = async (blob: Blob) => {
   const downloadImage = (url: string, id: number) => {
     const a = document.createElement('a');
     a.href = url;
-    a.download = `photo-${id}.jpg`;
+    a.download = `photo-${Math.abs(id)}.jpg`;
     a.target = '_blank';
     document.body.appendChild(a);
     a.click();
@@ -322,17 +421,30 @@ const handleCropSave = async (blob: Blob) => {
     (p) => p.chapter_id === parseInt(editChapterId || String(editingImage?.chapterId ?? 0))
   );
 
-  const sourceLabel = (source: LibraryImage['source']) => {
-    if (source === 'gallery') return 'gallery';
-    if (source === 'content') return 'inline';
-    return 'page';
+  const sourceLabel = (img: LibraryImage) => {
+    if (img.source === 'gallery') return 'gallery';
+    if (img.source === 'content') return 'inline';
+    if (img.source === 'page') return 'page';
+    if (img.source === 'chapter') return 'chapter header';
+    if (img.source === 'book') return img.id === BOOK_INTRO_ID ? 'intro' : 'cover';
+    return img.source;
   };
 
-  const sourceBadgeClass = (source: LibraryImage['source']) => {
+  const sourceBadgeClass = (source: ImageSource) => {
     if (source === 'gallery') return 'bg-amber-500/90 text-white';
     if (source === 'content') return 'bg-blue-500/90 text-white';
+    if (source === 'book') return 'bg-emerald-600/90 text-white';
+    if (source === 'chapter') return 'bg-purple-500/90 text-white';
     return 'bg-slate-700/80 text-white';
   };
+
+  // For book/chapter images, most of the "move to chapter" / "assign to page"
+  // editing UI doesn't apply — they're tied to a fixed book or chapter record.
+  const isReassignable = editingImage?.source === 'gallery' || editingImage?.source === 'page';
+  const showCaptionField =
+    editingImage?.source === 'gallery' ||
+    editingImage?.source === 'page' ||
+    (editingImage?.source === 'book' && editingImage.id === BOOK_INTRO_ID);
 
   return (
     <AnimatePresence>
@@ -368,12 +480,13 @@ const handleCropSave = async (blob: Blob) => {
             </div>
 
             {/* Stats */}
-            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-5 gap-3 shrink-0">
+            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-3 sm:grid-cols-6 gap-3 shrink-0">
               {[
                 { label: 'Total photos', value: stats.total },
                 { label: 'Page images', value: stats.page },
                 { label: 'Gallery photos', value: stats.gallery },
                 { label: 'Inline (content)', value: stats.content },
+                { label: 'Cover & headers', value: stats.bookAndChapter },
                 { label: 'With captions', value: stats.captioned },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
@@ -404,6 +517,8 @@ const handleCropSave = async (blob: Blob) => {
                 <option value="page">Page images</option>
                 <option value="gallery">Gallery photos</option>
                 <option value="content">Inline (content)</option>
+                <option value="book">Book cover / intro</option>
+                <option value="chapter">Chapter headers</option>
               </select>
               <div className="flex items-center gap-2 flex-1 min-w-[160px]">
                 <Search size={14} className="text-slate-400 shrink-0" />
@@ -445,7 +560,7 @@ const handleCropSave = async (blob: Blob) => {
                           loading="lazy"
                         />
                         <span className={`absolute bottom-1.5 left-1.5 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded ${sourceBadgeClass(img.source)}`}>
-                          {sourceLabel(img.source)}
+                          {sourceLabel(img)}
                         </span>
                       </div>
                       <div className="p-2.5">
@@ -491,11 +606,11 @@ const handleCropSave = async (blob: Blob) => {
                   className="fixed inset-0 bg-black/40 z-[60]"
                 />
                 <CropModal
-  open={cropping && editingImage !== null}
-  imageUrl={editingImage?.url ?? ''}
-  onCancel={() => setCropping(false)}
-  onSave={handleCropSave}
-/>
+                  open={cropping && editingImage !== null}
+                  imageUrl={editingImage?.url ?? ''}
+                  onCancel={() => setCropping(false)}
+                  onSave={handleCropSave}
+                />
                 <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none">
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -512,22 +627,22 @@ const handleCropSave = async (blob: Blob) => {
                     </div>
                     <div className="p-5 space-y-4">
                       <img
-  src={editingImage.url}
-  alt=""
-  className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
-/>
+                        src={editingImage.url}
+                        alt=""
+                        className="w-full max-h-48 object-contain rounded-lg border border-slate-200 bg-slate-50"
+                      />
 
-{editingImage.source !== 'content' && (
-  <button
-    type="button"
-    onClick={() => setCropping(true)}
-    className="flex items-center justify-center gap-1.5 w-full px-3 py-2 text-xs font-avenir font-semibold
-      text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors"
-  >
-    <Crop size={13} />
-    Crop / rotate this photo
-  </button>
-)}
+                      {editingImage.source !== 'content' && (
+                        <button
+                          type="button"
+                          onClick={() => setCropping(true)}
+                          className="flex items-center justify-center gap-1.5 w-full px-3 py-2 text-xs font-avenir font-semibold
+                            text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors"
+                        >
+                          <Crop size={13} />
+                          Crop / rotate this photo
+                        </button>
+                      )}
 
                       {saveError && (
                         <div className="px-3 py-2 text-xs font-avenir text-red-700 bg-red-50 border border-red-200 rounded-lg">
@@ -535,18 +650,32 @@ const handleCropSave = async (blob: Blob) => {
                         </div>
                       )}
 
-                      {editingImage.source !== 'content' && (
+                      {(editingImage.source === 'book' || editingImage.source === 'chapter') && (
+                        <div className="px-3 py-2 text-xs font-avenir text-slate-500 bg-slate-50 border border-slate-200 rounded-lg">
+                          {editingImage.source === 'book' && editingImage.id === BOOK_COVER_ID &&
+                            "This is the book's cover photo. It isn't tied to a chapter or page."}
+                          {editingImage.source === 'book' && editingImage.id === BOOK_INTRO_ID &&
+                            "This is the book's intro photo. It isn't tied to a chapter or page."}
+                          {editingImage.source === 'chapter' &&
+                            `This is the header photo for "${editingImage.chapterName}". It isn't tied to a specific page.`}
+                        </div>
+                      )}
+
+                      {showCaptionField && (
+                        <div>
+                          <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
+                          <textarea
+                            value={editCaption}
+                            onChange={(e) => setEditCaption(e.target.value)}
+                            placeholder="Add a caption…"
+                            rows={3}
+                            className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
+                          />
+                        </div>
+                      )}
+
+                      {isReassignable && (
                         <>
-                          <div>
-                            <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Caption</label>
-                            <textarea
-                              value={editCaption}
-                              onChange={(e) => setEditCaption(e.target.value)}
-                              placeholder="Add a caption…"
-                              rows={3}
-                              className="w-full px-3 py-2 text-sm font-avenir text-slate-700 border border-slate-200 rounded-lg resize-none focus:outline-none focus:border-slate-400"
-                            />
-                          </div>
                           <div>
                             <label className="block text-xs font-avenir font-bold text-slate-600 uppercase tracking-wider mb-1.5">Move to chapter</label>
                             <select
