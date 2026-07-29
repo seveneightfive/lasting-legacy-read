@@ -27,96 +27,28 @@ function getPageImages(galleryItems: GalleryItem[], pageId: number): GalleryItem
     .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
 }
 
-function PageImages({ images }: { images: GalleryItem[] }) {
-  if (!images.length) return null;
-
-  if (images.length === 1) {
-    const img = images[0];
-    return (
-      <figure className="my-6">
-        <img
-          src={img.image_url}
-          alt={img.image_caption || ''}
-          className="w-full rounded-lg shadow-md object-cover"
-          loading="lazy"
-        />
-        {img.image_caption && (
-          <figcaption className="text-sm text-slate-500 italic font-lora text-center mt-2">
-            {img.image_caption}
-          </figcaption>
-        )}
-      </figure>
-    );
-  }
-
-  const gridClass = images.length === 2
-    ? 'grid grid-cols-2 gap-3'
-    : 'grid grid-cols-2 md:grid-cols-3 gap-3';
-
-  return (
-    <div className={`${gridClass} my-6`}>
-      {images.map(img => (
-        <figure key={img.id} className="m-0">
-          <img
-            src={img.image_url}
-            alt={img.image_caption || ''}
-            className="w-full rounded-lg shadow-sm object-cover aspect-[4/3]"
-            loading="lazy"
-          />
-          {img.image_caption && (
-            <figcaption className="text-xs text-slate-500 italic font-lora text-center mt-1">
-              {img.image_caption}
-            </figcaption>
-          )}
-        </figure>
-      ))}
-    </div>
-  );
-}
-
-// ── GALLERY PAGE ──────────────────────────────────────────────
-// Full-width 3-col grid on desktop; horizontal snap-scroll on mobile.
-// Used when page.gallery_page === true.
-function GalleryPageLayout({
-  page,
-  images,
-  pageNumber,
-  totalPages,
-  chapter,
-  onNext,
-  onPrevious,
-}: {
-  page: Page;
-  images: GalleryItem[];
-  pageNumber: number;
-  totalPages: number;
-  chapter: Chapter;
-  onNext: () => void;
-  onPrevious: () => void;
+// Used only for gallery pages (page.gallery_page === true)
+function GalleryPageLayout({ page, images, pageNumber, totalPages, chapter, onNext, onPrevious }: {
+  page: Page; images: GalleryItem[]; pageNumber: number; totalPages: number;
+  chapter: Chapter; onNext: () => void; onPrevious: () => void;
 }) {
   return (
     <div className="min-h-screen bg-white flex flex-col">
-
-      {/* Scrollable gallery area */}
       <div className="flex-1 overflow-y-auto px-4 md:px-10 py-8">
         {page.subtitle && (
-          <h2 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
-            {page.subtitle}
-          </h2>
+          <h2 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">{page.subtitle}</h2>
         )}
-
         {images.length === 0 ? (
           <p className="text-slate-400 text-sm font-avenir">No photos on this page yet.</p>
         ) : (
           <>
-            {/* Desktop: equal 3-col grid */}
-            <div className="hidden md:grid grid-cols-3 gap-2">
+            <div className="hidden md:block" style={{ columns: 3, columnGap: '0.75rem' }}>
               {images.map(img => (
-                <GalleryCell key={img.id} img={img} />
+                <div key={img.id} className="break-inside-avoid mb-3">
+                  <GalleryCell img={img} />
+                </div>
               ))}
             </div>
-
-            {/* Mobile: horizontal snap-scroll */}
             <div className="flex md:hidden gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory">
               {images.map(img => (
                 <div key={img.id} className="flex-none w-[75vw] snap-start">
@@ -124,17 +56,12 @@ function GalleryPageLayout({
                 </div>
               ))}
             </div>
-
             {images.length > 1 && (
-              <p className="md:hidden text-xs text-slate-400 mt-2 text-center font-avenir">
-                Swipe to see all photos
-              </p>
+              <p className="md:hidden text-xs text-slate-400 mt-2 text-center font-avenir">Swipe to see all photos</p>
             )}
           </>
         )}
       </div>
-
-      {/* Bottom nav — same style as the rest of the reader */}
       <div className="border-t border-slate-200 bg-white px-8 pt-4 pb-6">
         <div className="max-w-2xl mx-auto mb-2">
           <p className="text-slate-400 text-xs font-avenir">
@@ -143,21 +70,9 @@ function GalleryPageLayout({
           </p>
         </div>
         <div className="flex justify-between items-center max-w-2xl mx-auto">
-          <button
-            onClick={onPrevious}
-            className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors"
-          >
-            ← Previous
-          </button>
-          <span className="text-slate-500 text-sm font-avenir">
-            Page {pageNumber} of {totalPages}
-          </span>
-          <button
-            onClick={onNext}
-            className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
-          >
-            Next →
-          </button>
+          <button onClick={onPrevious} className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors">← Previous</button>
+          <span className="text-slate-500 text-sm font-avenir">Page {pageNumber} of {totalPages}</span>
+          <button onClick={onNext} className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors">Next →</button>
         </div>
       </div>
     </div>
@@ -166,24 +81,13 @@ function GalleryPageLayout({
 
 function GalleryCell({ img }: { img: GalleryItem }) {
   return (
-    <figure className="m-0 relative overflow-hidden rounded-lg bg-slate-100 aspect-[4/3]">
-      <img
-        src={img.image_url}
-        alt={img.image_caption || img.image_title || ''}
-        className="absolute inset-0 w-full h-full object-cover"
-        loading="lazy"
-      />
+    <figure className="m-0 relative overflow-hidden rounded-lg bg-slate-100">
+      <img src={img.image_url} alt={img.image_caption || img.image_title || ''} className="w-full h-auto block" loading="lazy" />
       {(img.image_title || img.image_caption) && (
-        <figcaption className="absolute bottom-0 left-0 right-0 px-3 py-2 bg-gradient-to-t from-black/60 to-transparent">
-          {img.image_title && (
-            <p className="text-white text-xs font-avenir font-medium leading-tight">
-              {img.image_title}
-            </p>
-          )}
+        <figcaption className="px-3 py-2 bg-white border-t border-slate-100">
+          {img.image_title && <p className="text-slate-700 text-xs font-avenir font-medium leading-tight">{img.image_title}</p>}
           {img.image_caption && img.image_caption !== img.image_title && (
-            <p className="text-white/80 text-xs font-lora italic leading-tight mt-0.5">
-              {img.image_caption}
-            </p>
+            <p className="text-slate-500 text-xs font-lora italic leading-tight mt-0.5">{img.image_caption}</p>
           )}
         </figcaption>
       )}
@@ -191,20 +95,12 @@ function GalleryCell({ img }: { img: GalleryItem }) {
   );
 }
 
-// ── MAIN EXPORT ───────────────────────────────────────────────
-export default function ChapterReader({
-  chapter,
-  page,
-  pageNumber,
-  totalPages,
-  galleryItems,
-  onNext,
-  onPrevious
-}: ChapterReaderProps) {
+export default function ChapterReader({ chapter, page, pageNumber, totalPages, galleryItems, onNext, onPrevious }: ChapterReaderProps) {
   const isDesktop = useIsDesktop();
   const useSplitScreen = isDesktop && totalPages >= 2;
   const [slideDirection, setSlideDirection] = useState<'left' | 'right'>('right');
 
+  // pageImages used only for gallery pages and the left-panel fallback
   const pageImages = getPageImages(galleryItems, page.id);
   const contentHtml = renderContent(page.content || '');
 
@@ -216,171 +112,99 @@ export default function ChapterReader({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [pageNumber]);
 
-  // ── GALLERY PAGE (overrides both layouts) ────────────────────
+  // Gallery page — author toggled "Make this a photo page"
+  // Data in Supabase is untouched; nothing deleted.
   if (page.gallery_page) {
     return (
       <GalleryPageLayout
-        page={page}
-        images={pageImages}
-        pageNumber={pageNumber}
-        totalPages={totalPages}
-        chapter={chapter}
-        onNext={handleNextClick}
-        onPrevious={handlePreviousClick}
+        page={page} images={pageImages} pageNumber={pageNumber}
+        totalPages={totalPages} chapter={chapter}
+        onNext={handleNextClick} onPrevious={handlePreviousClick}
       />
     );
   }
 
-  // ── MOBILE / SINGLE COLUMN ────────────────────────────────────
+  // MOBILE — inline images in contentHtml render naturally.
+  // Gallery items attached to this page are NOT rendered here;
+  // they remain safe in Supabase and visible in the Photo Library.
   if (!useSplitScreen) {
     return (
       <motion.div
-        initial={{ opacity: 0, x: 50 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: -50 }}
-        transition={{ duration: 0.5 }}
+        initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: -50 }} transition={{ duration: 0.5 }}
         className="min-h-screen bg-white p-8 flex items-center"
       >
         <div className="max-w-3xl mx-auto w-full">
           <div className="mb-8">
-            <p className="text-slate-500 text-sm font-avenir">
-              Chapter {chapter.number}: {chapter.title}
-            </p>
+            <p className="text-slate-500 text-sm font-avenir">Chapter {chapter.number}: {chapter.title}</p>
           </div>
-
           {page.image_url && (
             <div className="mb-8">
-              <img
-                src={page.image_url}
-                alt={page.image_caption || 'Chapter image'}
-                className="w-full rounded-lg shadow-md"
-              />
-              {page.image_caption && (
-                <p className="text-sm text-slate-600 mt-2 italic font-lora">
-                  {page.image_caption}
-                </p>
-              )}
+              <img src={page.image_url} alt={page.image_caption || 'Chapter image'} className="w-full rounded-lg shadow-md" />
+              {page.image_caption && <p className="text-sm text-slate-600 mt-2 italic font-lora">{page.image_caption}</p>}
             </div>
           )}
-
-          {page.subtitle && (
-            <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
-              {page.subtitle}
-            </h3>
-          )}
-
+          {page.subtitle && <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">{page.subtitle}</h3>}
           {page.quote && (
             <blockquote className="text-xl font-lora italic text-slate-700 mb-8 pl-6 border-l-4 border-slate-300 leading-body-relaxed quote-tracking">
-              <div
-                className="markdown-body"
-                dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }}
-              />
-              {page.quote_attribute && (
-                <footer className="text-base text-slate-600 mt-4 not-italic">
-                  — {page.quote_attribute}
-                </footer>
-              )}
+              <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }} />
+              {page.quote_attribute && <footer className="text-base text-slate-600 mt-4 not-italic">— {page.quote_attribute}</footer>}
             </blockquote>
           )}
-
           {page.content && (
-            <div
-              className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking"
-              dangerouslySetInnerHTML={{ __html: contentHtml }}
-            />
+            <div className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking" dangerouslySetInnerHTML={{ __html: contentHtml }} />
           )}
-
-          <PageImages images={pageImages} />
-
           <div className="flex justify-between items-center pt-8 border-t border-slate-200">
-            <button
-              onClick={handlePreviousClick}
-              className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors"
-            >
-              ← Previous
-            </button>
-            <span className="text-slate-500 text-sm font-avenir">
-              Page {pageNumber} of {totalPages}
-            </span>
-            <button
-              onClick={handleNextClick}
-              className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
-            >
-              Next →
-            </button>
+            <button onClick={handlePreviousClick} className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors">← Previous</button>
+            <span className="text-slate-500 text-sm font-avenir">Page {pageNumber} of {totalPages}</span>
+            <button onClick={handleNextClick} className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors">Next →</button>
           </div>
         </div>
       </motion.div>
     );
   }
 
-  // ── DESKTOP SPLIT SCREEN ──────────────────────────────────────
+  // DESKTOP SPLIT SCREEN
+  // Left panel: page.image_url (Glide answer photo) or first gallery
+  // item as fallback. Right panel: prose + inline images only.
   return (
     <div className="fixed inset-0 flex bg-white">
-
-      {/* LEFT: Image panel */}
       <div className="w-[45%] h-screen flex flex-col bg-white overflow-hidden relative">
         <div className="h-full flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
-
             {page.image_url ? (
-  <motion.div
-    key={`image-${pageNumber}`}
-    initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
-    animate={{ x: 0, opacity: 1 }}
-    exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
-    transition={{ duration: 0.6, ease: 'easeInOut' }}
-    className="w-full h-full flex flex-col items-center justify-center p-8"
-  >
-    <div className="relative w-full flex-1 min-h-0">
-      <img
-        src={page.image_url}
-        alt={page.image_caption || 'Chapter image'}
-        className="absolute inset-0 w-full h-full object-contain"
-      />
-    </div>
-    {page.image_caption && (
-      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">
-        {page.image_caption}
-      </p>
-    )}
-  </motion.div>
-
-) : pageImages.length > 0 ? (
-  <motion.div
-    key={`gallery-${pageNumber}`}
-    initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
-    animate={{ x: 0, opacity: 1 }}
-    exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
-    transition={{ duration: 0.6, ease: 'easeInOut' }}
-    className="w-full h-full flex flex-col items-center justify-center p-8"
-  >
-    <div className="relative w-full flex-1 min-h-0">
-      <img
-        src={pageImages[0].image_url}
-        alt={pageImages[0].image_caption || ''}
-        className="absolute inset-0 w-full h-full object-contain"
-      />
-    </div>
-    {pageImages[0].image_caption && (
-      <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">
-        {pageImages[0].image_caption}
-      </p>
-    )}
-    {pageImages.length > 1 && (
-      <div className="flex gap-2 mt-4 justify-center shrink-0">
-        {pageImages.slice(1).map(img => (
-          <img
-            key={img.id}
-            src={img.image_url}
-            alt={img.image_caption || ''}
-            className="w-20 h-20 object-cover rounded-md shadow-sm"
-          />
-        ))}
-      </div>
-    )}
-  </motion.div>
-
+              <motion.div
+                key={`image-${pageNumber}`}
+                initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
+                transition={{ duration: 0.6, ease: 'easeInOut' }}
+                className="w-full h-full flex flex-col items-center justify-center p-8"
+              >
+                <div className="relative w-full flex-1 min-h-0">
+                  <img src={page.image_url} alt={page.image_caption || 'Chapter image'} className="absolute inset-0 w-full h-full object-contain" />
+                </div>
+                {page.image_caption && (
+                  <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">{page.image_caption}</p>
+                )}
+              </motion.div>
+            ) : pageImages.length > 0 ? (
+              // Fallback: first gallery item fills left panel when no page.image_url
+              <motion.div
+                key={`gallery-${pageNumber}`}
+                initial={{ x: slideDirection === 'left' ? 300 : -300, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: slideDirection === 'left' ? -300 : 300, opacity: 0 }}
+                transition={{ duration: 0.6, ease: 'easeInOut' }}
+                className="w-full h-full flex flex-col items-center justify-center p-8"
+              >
+                <div className="relative w-full flex-1 min-h-0">
+                  <img src={pageImages[0].image_url} alt={pageImages[0].image_caption || ''} className="absolute inset-0 w-full h-full object-contain" />
+                </div>
+                {pageImages[0].image_caption && (
+                  <p className="max-w-md text-sm text-slate-600 mt-4 italic font-lora text-center shrink-0">{pageImages[0].image_caption}</p>
+                )}
+              </motion.div>
             ) : page.subtitle ? (
               <motion.div
                 key={`subtitle-${pageNumber}`}
@@ -390,99 +214,52 @@ export default function ChapterReader({
                 transition={{ duration: 0.6, ease: 'easeInOut' }}
                 className="w-full h-full flex items-center justify-center bg-slate-800 p-12"
               >
-                <h2 className="text-5xl font-avenir text-white text-center leading-tight">
-                  {page.subtitle}
-                </h2>
+                <h2 className="text-5xl font-avenir text-white text-center leading-tight">{page.subtitle}</h2>
               </motion.div>
-
             ) : (
               <motion.div
                 key={`empty-${pageNumber}`}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
                 className="w-full h-full flex items-center justify-center"
               >
                 <div className="text-slate-400 text-lg font-avenir">No visual content</div>
               </motion.div>
             )}
-
           </AnimatePresence>
         </div>
       </div>
 
-      {/* RIGHT: Text panel */}
       <div className="w-[55%] h-screen flex flex-col relative">
-
-        <div
-          ref={scrollRef}
-          className="flex-1 overflow-y-auto px-12 flex flex-col"
-          style={{ paddingBottom: '160px' }}
-        >
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-12 flex flex-col" style={{ paddingBottom: '160px' }}>
           <div className="max-w-2xl mx-auto w-full" style={{ marginTop: 'max(20vh, 60px)' }}>
-            {page.subtitle && (
-              <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">
-                {page.subtitle}
-              </h3>
-            )}
-
+            {page.subtitle && <h3 className="text-2xl font-avenir text-slate-800 mb-6 heading-tracking">{page.subtitle}</h3>}
             {page.quote && (
               <blockquote className="text-xl font-lora italic text-slate-700 mb-8 pl-6 border-l-4 border-slate-300 leading-body-relaxed quote-tracking">
-                <div
-                  className="markdown-body"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }}
-                />
-                {page.quote_attribute && (
-                  <footer className="text-base text-slate-600 mt-4 not-italic">
-                    — {page.quote_attribute}
-                  </footer>
-                )}
+                <div className="markdown-body" dangerouslySetInnerHTML={{ __html: marked.parse(page.quote) as string }} />
+                {page.quote_attribute && <footer className="text-base text-slate-600 mt-4 not-italic">— {page.quote_attribute}</footer>}
               </blockquote>
             )}
-
             {page.content && (
-              <div
-                className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking"
-                dangerouslySetInnerHTML={{ __html: contentHtml }}
-              />
+              <div className="markdown-body font-lora text-slate-800 mb-6 leading-body-relaxed body-tracking" dangerouslySetInnerHTML={{ __html: contentHtml }} />
             )}
-
-            {pageImages.length > 1 && (
-              <PageImages images={pageImages.slice(1)} />
-            )}
+            {/* Gallery items for non-gallery pages are NOT rendered here.
+                They remain in Supabase and the Photo Library. */}
           </div>
         </div>
-
-        {/* Bottom nav */}
         <div className="absolute bottom-0 left-0 right-0 border-t border-slate-200 bg-white px-8 pt-4 pb-6">
           <div className="max-w-2xl mx-auto mb-2">
             <p className="text-slate-400 text-xs font-avenir">
               Chapter {chapter.number}: {chapter.title}
-              {chapter.lede && (
-                <span className="italic"> — {chapter.lede}</span>
-              )}
+              {chapter.lede && <span className="italic"> — {chapter.lede}</span>}
             </p>
           </div>
           <div className="flex justify-between items-center max-w-2xl mx-auto">
-            <button
-              onClick={handlePreviousClick}
-              className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors"
-            >
-              ← Previous
-            </button>
-            <span className="text-slate-500 text-sm font-avenir">
-              Page {pageNumber} of {totalPages}
-            </span>
-            <button
-              onClick={handleNextClick}
-              className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors"
-            >
-              Next →
-            </button>
+            <button onClick={handlePreviousClick} className="px-6 py-2 font-avenir text-slate-600 hover:text-slate-800 transition-colors">← Previous</button>
+            <span className="text-slate-500 text-sm font-avenir">Page {pageNumber} of {totalPages}</span>
+            <button onClick={handleNextClick} className="px-6 py-2 bg-slate-800 text-white rounded-full font-avenir hover:bg-slate-900 transition-colors">Next →</button>
           </div>
         </div>
-
       </div>
     </div>
   );
