@@ -32,7 +32,7 @@ type ReadingState =
   | 'thank-you';
 
 const KAY_MCFARLAND_SLUG = 'kay-mcfarland';
-const POPUP1_TRIGGER_PAGE = 2;
+const POPUP1_TRIGGER_PAGE = 4;
 
 function hasContent(field: unknown): boolean {
   if (field == null) return false;
@@ -70,15 +70,15 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const hasChapters = chapters.length > 0;
 
   // Determines what the BookCover's page-turn flip should land on,
-// so the flip visually hands off into whatever screen comes next.
-const firstChapterHasImage = Boolean(chapters[0]?.image_url);
-const coverNextBg = hasDedication
-  ? 'linear-gradient(to bottom right, #0f172a, #334155)' // matches BookDedication's right panel
-  : hasIntro
-    ? '#f8fafc' // slate-50 — matches BookIntro's background
-    : firstChapterHasImage
-      ? '#0f172a'
-      : '#1e293b'; // matches ChapterTitle's plain (no image) background
+  // so the flip visually hands off into whatever screen comes next.
+  const firstChapterHasImage = Boolean(chapters[0]?.image_url);
+  const coverNextBg = hasDedication
+    ? 'linear-gradient(to bottom right, #0f172a, #334155)' // matches BookDedication's right panel
+    : hasIntro
+      ? '#f8fafc' // slate-50 — matches BookIntro's background
+      : firstChapterHasImage
+        ? '#0f172a'
+        : '#1e293b'; // matches ChapterTitle's plain (no image) background
 
   const { showPopup1, showPopup2, dismissPopup1, dismissPopup2 } = useMcFarlandPopups({
     globalPageCount,
@@ -101,14 +101,14 @@ const coverNextBg = hasDedication
   }, [currentState, chapters]);
 
   useEffect(() => {
-    if (currentState === 'guestbook' && book.user) {
+    if (currentState === 'guestbook' && book.id) {
       fetchGuestbookEntries();
     }
-  }, [currentState, book.user]);
+  }, [currentState, book.id]);
 
   useEffect(() => {
-  window.scrollTo({ top: 0, behavior: 'instant' });
-}, [currentState, currentPageIndex]);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [currentState, currentPageIndex]);
 
   const fetchPages = async (chapterId: number) => {
     setLoading(true);
@@ -181,14 +181,15 @@ const coverNextBg = hasDedication
     }
   };
 
+  // FIX 1: query by book_id (reliable FK) and author_email (renamed from 'user').
+  // Also fetch ALL entries here — private filtering is handled in Guestbook.tsx display.
   const fetchGuestbookEntries = async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from('guestbook')
         .select('*')
-        .eq('user', book.user)
-        .neq('private', true)
+        .eq('book_id', book.id)
         .order('created_at', { ascending: false });
       if (error) throw error;
       setGuestbookEntries(data || []);
@@ -452,12 +453,14 @@ const coverNextBg = hasDedication
         <ChapterGallery galleryItems={galleryItems} onPrevious={handlePrevious} onNext={handleNext} />
       )}
 
+      {/* FIX 2: pass onEntryAdded so the list refreshes immediately after signing */}
       {currentState === 'guestbook' && (
         <Guestbook
           book={book}
           entries={guestbookEntries}
           onPrevious={handlePrevious}
           onNext={handleNext}
+          onEntryAdded={fetchGuestbookEntries}
         />
       )}
 
