@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Download, Search, Images, Crop } from 'lucide-react';
+import { X, Download, Search, Images, Crop, Upload, Loader2, Trash2 } from 'lucide-react';
 import { supabase, Book, Chapter, Page, GalleryItem } from '../../lib/supabase';
 import { useImageUpload } from '../../hooks/useImageUpload';
 import CropModal from './CropModal';
@@ -13,7 +13,7 @@ interface PhotoLibraryProps {
   chapters: Chapter[];
 }
 
-type ImageSource = 'page' | 'gallery' | 'content' | 'book' | 'chapter';
+type ImageSource = 'page' | 'gallery' | 'content' | 'book' | 'chapter' | 'library';
 
 interface LibraryImage {
   id: number;
@@ -69,6 +69,12 @@ const BOOK_COVER_ID = -1;
 const BOOK_INTRO_ID = -2;
 const CHAPTER_HEADER_ID_OFFSET = -1000000; // chapterId gets subtracted from this
 
+interface RawLibraryRow {
+  id: number;
+  image_url: string;
+  caption: string | null;
+}
+
 export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLibraryProps) {
   const [images, setImages] = useState<LibraryImage[]>([]);
   const [loading, setLoading] = useState(false);
@@ -85,18 +91,27 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const [promoteError, setPromoteError] = useState<string | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
 
-  const { upload, uploading } = useImageUpload({ folder: book.slug });
+  // Bulk "upload to library" state
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const bulkInputRef = useRef<HTMLInputElement>(null);
+
+  const { upload } = useImageUpload({ folder: book.slug });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const chapterMap = new Map(chapters.map((c) => [c.id, c.title || `Chapter ${c.number}`]));
 
-      const [{ data: pagesData }, { data: galleryData }] = await Promise.all([
+      const [{ data: pagesData }, { data: galleryData }, { data: libraryData }] = await Promise.all([
         supabase.from('pages').select('*').in('chapter_id', chapters.map((c) => c.id))
           .or('is_deleted.is.null,is_deleted.eq.false'),
         supabase.from('gallery').select('*').in('chapter_id', chapters.map((c) => c.id))
           .order('sort_order', { ascending: true }),
+        supabase.from('photo_library').select('id, image_url, caption')
+          .eq('book_slug', book.slug)
+          .order('created_at', { ascending: false }),
       ]);
 
       setPages(pagesData ?? []);
@@ -190,11 +205,27 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
           all.push(...embedded);
         });
 
+      // 4. Unassigned library uploads — not tied to any chapter/page yet.
+      //    Lives in its own table (`photo_library`) so it never touches
+      //    Glide/Whalesync-synced columns.
+      ((libraryData ?? []) as RawLibraryRow[]).forEach((row) => {
+        all.push({
+          id: row.id,
+          source: 'library',
+          url: row.image_url,
+          caption: row.caption ?? '',
+          chapterId: 0,
+          chapterName: 'Library',
+          pageId: null,
+          pageLabel: 'Not used yet',
+        });
+      });
+
       setImages(all);
     } finally {
       setLoading(false);
     }
-  }, [book.id, book.image_url, book.intro_image_url, book.intro_image_caption, chapters]);
+  }, [book.id, book.slug, book.image_url, book.intro_image_url, book.intro_image_caption, chapters]);
 
   const [cropping, setCropping] = useState(false);
 
@@ -221,6 +252,11 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
         .from('chapters')
         .update({ image_url: uploaded.publicUrl })
         .eq('id', editingImage.chapterId));
+    } else if (editingImage.source === 'library') {
+      ({ error } = await supabase
+        .from('photo_library')
+        .update({ image_url: uploaded.publicUrl })
+        .eq('id', editingImage.id));
     }
 
     if (error) {
@@ -241,6 +277,50 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     if (open) load();
   }, [open, load]);
 
+  // ── Bulk upload into the library ────────────────────────────
+  const handleBulkFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    setBulkUploading(true);
+    setBulkError(null);
+    setBulkProgress({ done: 0, total: files.length });
+
+    let successCount = 0;
+    for (const file of files) {
+      const result = await upload(file);
+      if (result) {
+        const { error } = await supabase.from('photo_library').insert({
+          book_slug: book.slug,
+          image_url: result.publicUrl,
+        });
+        if (!error) successCount += 1;
+      }
+      setBulkProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : prev));
+    }
+
+    setBulkUploading(false);
+    setBulkProgress(null);
+    if (successCount < files.length) {
+      setBulkError(`${successCount} of ${files.length} photos uploaded. Some may have failed — try those again.`);
+    }
+    await load();
+  };
+
+  const onBulkInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    void handleBulkFiles(e.target.files);
+    e.target.value = '';
+  };
+
+  const deleteLibraryPhoto = async (img: LibraryImage) => {
+    if (img.source !== 'library') return;
+    const ok = window.confirm('Remove this photo from your library? It will no longer be available to pick from — this doesn\u2019t affect any place it\u2019s already been used.');
+    if (!ok) return;
+    const { error } = await supabase.from('photo_library').delete().eq('id', img.id);
+    if (error) { window.alert('Could not remove this photo. Please try again.'); return; }
+    setImages((prev) => prev.filter((i) => !(i.source === 'library' && i.id === img.id)));
+    if (editingImage?.source === 'library' && editingImage.id === img.id) closeEdit();
+  };
+
   const filtered = images.filter((img) => {
     if (filterChapter && String(img.chapterId) !== filterChapter) return false;
     if (filterSource && img.source !== filterSource) return false;
@@ -255,6 +335,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     gallery: images.filter((i) => i.source === 'gallery').length,
     content: images.filter((i) => i.source === 'content').length,
     bookAndChapter: images.filter((i) => i.source === 'book' || i.source === 'chapter').length,
+    library: images.filter((i) => i.source === 'library').length,
     captioned: images.filter((i) => i.caption.trim()).length,
   };
 
@@ -302,7 +383,6 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
             return;
           }
         }
-        // The cover photo has no caption field in the schema — nothing else to save.
         setImages((prev) => prev.map((img) =>
           img.id === editingImage.id && img.source === 'book'
             ? { ...img, caption: editCaption }
@@ -315,6 +395,25 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
       // Chapter header image — no caption field in the schema, nothing to save
       // beyond a crop (handled separately in handleCropSave).
       if (editingImage.source === 'chapter') {
+        closeEdit();
+        return;
+      }
+
+      // Library photo — just update its caption, no chapter/page concept.
+      if (editingImage.source === 'library') {
+        const { error } = await supabase
+          .from('photo_library')
+          .update({ caption: editCaption || null })
+          .eq('id', editingImage.id);
+        if (error) {
+          setSaveError(error.message || 'Something went wrong saving this photo.');
+          return;
+        }
+        setImages((prev) => prev.map((img) =>
+          img.id === editingImage.id && img.source === 'library'
+            ? { ...img, caption: editCaption }
+            : img
+        ));
         closeEdit();
         return;
       }
@@ -426,6 +525,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     if (img.source === 'content') return 'inline';
     if (img.source === 'page') return 'page';
     if (img.source === 'chapter') return 'chapter header';
+    if (img.source === 'library') return 'library';
     if (img.source === 'book') return img.id === BOOK_INTRO_ID ? 'intro' : 'cover';
     return img.source;
   };
@@ -435,6 +535,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     if (source === 'content') return 'bg-blue-500/90 text-white';
     if (source === 'book') return 'bg-emerald-600/90 text-white';
     if (source === 'chapter') return 'bg-purple-500/90 text-white';
+    if (source === 'library') return 'bg-slate-500/90 text-white';
     return 'bg-slate-700/80 text-white';
   };
 
@@ -444,6 +545,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const showCaptionField =
     editingImage?.source === 'gallery' ||
     editingImage?.source === 'page' ||
+    editingImage?.source === 'library' ||
     (editingImage?.source === 'book' && editingImage.id === BOOK_INTRO_ID);
 
   return (
@@ -474,19 +576,43 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                   Photo Library
                 </h2>
               </div>
-              <button onClick={onClose} className="p-1 text-slate-500 hover:text-slate-800 transition-colors">
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => bulkInputRef.current?.click()}
+                  disabled={bulkUploading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-avenir text-white bg-slate-800 rounded-full hover:bg-slate-900 disabled:opacity-50 transition-colors"
+                >
+                  {bulkUploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  {bulkUploading && bulkProgress
+                    ? `Uploading ${bulkProgress.done}/${bulkProgress.total}…`
+                    : 'Upload photos'}
+                </button>
+                <button onClick={onClose} className="p-1 text-slate-500 hover:text-slate-800 transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
+            {bulkError && (
+              <div className="px-6 py-2 bg-amber-50 border-b border-amber-200 text-xs font-avenir text-amber-800">
+                {bulkError}
+              </div>
+            )}
+
+            <p className="px-6 pt-3 text-xs font-avenir text-slate-400">
+              Upload photos here any time — even before you know where they'll go. Pick them later from the
+              "From your library" tab when inserting an inline image.
+            </p>
+
             {/* Stats */}
-            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-3 sm:grid-cols-6 gap-3 shrink-0">
+            <div className="px-6 py-4 border-b border-slate-100 grid grid-cols-3 sm:grid-cols-7 gap-3 shrink-0">
               {[
                 { label: 'Total photos', value: stats.total },
                 { label: 'Page images', value: stats.page },
                 { label: 'Gallery photos', value: stats.gallery },
                 { label: 'Inline (content)', value: stats.content },
                 { label: 'Cover & headers', value: stats.bookAndChapter },
+                { label: 'Library (unused)', value: stats.library },
                 { label: 'With captions', value: stats.captioned },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-slate-50 rounded-lg p-3 text-center border border-slate-200">
@@ -519,6 +645,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                 <option value="content">Inline (content)</option>
                 <option value="book">Book cover / intro</option>
                 <option value="chapter">Chapter headers</option>
+                <option value="library">Library (unused)</option>
               </select>
               <div className="flex items-center gap-2 flex-1 min-w-[160px]">
                 <Search size={14} className="text-slate-400 shrink-0" />
@@ -587,6 +714,15 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                           >
                             Edit
                           </button>
+                          {img.source === 'library' && (
+                            <button
+                              onClick={() => deleteLibraryPhoto(img)}
+                              className="p-1 rounded border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-200 transition-colors"
+                              title="Remove from library"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -658,6 +794,13 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                             "This is the book's intro photo. It isn't tied to a chapter or page."}
                           {editingImage.source === 'chapter' &&
                             `This is the header photo for "${editingImage.chapterName}". It isn't tied to a specific page.`}
+                        </div>
+                      )}
+
+                      {editingImage.source === 'library' && (
+                        <div className="px-3 py-2 text-xs font-avenir text-slate-500 bg-slate-50 border border-slate-200 rounded-lg">
+                          This photo is in your library but not used anywhere yet. Pick it from the "From your
+                          library" tab next time you insert an inline image.
                         </div>
                       )}
 
@@ -737,6 +880,14 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         Download
                       </button>
                       <div className="flex gap-2">
+                        {editingImage.source === 'library' && (
+                          <button
+                            onClick={() => deleteLibraryPhoto(editingImage)}
+                            className="px-4 py-2 text-sm font-avenir text-red-700 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        )}
                         <button
                           onClick={closeEdit}
                           className="px-4 py-2 text-sm font-avenir text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
@@ -762,6 +913,15 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
           </motion.aside>
         </>
       )}
+
+      <input
+        ref={bulkInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        multiple
+        onChange={onBulkInputChange}
+        className="hidden"
+      />
     </AnimatePresence>
   );
 }
