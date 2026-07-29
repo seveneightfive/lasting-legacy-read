@@ -35,10 +35,16 @@ export interface GalleryItem {
   created_at?: string; sort_order?: number; user?: string; row_id?: string;
 }
 
+/** Matches the cleaned public.guestbook table (post July 2026 migration). */
 export interface GuestbookEntry {
-  id: number; message?: string; private?: string; recording?: string;
-  guest?: string; book_id?: number; created_at?: string;
-  user?: string; guest_email?: string;
+  id: number;
+  created_at?: string;
+  author_email?: string;   // book owner's email — never shown publicly
+  guest_email?: string;    // signer's email — shown to author only
+  message?: string;
+  private: boolean;        // default false
+  guest?: string;          // signer's display name — shown publicly
+  book_id?: number;
 }
 
 export interface PageRevision {
