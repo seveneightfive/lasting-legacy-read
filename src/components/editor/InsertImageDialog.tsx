@@ -1,19 +1,34 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Upload, Loader2, ImageIcon, AlignLeft, LayoutGrid,
-  Square, Columns,
+  Square, Columns, Images, UploadCloud,
 } from 'lucide-react';
 import { useImageUpload } from '../../hooks/useImageUpload';
+import { supabase } from '../../lib/supabase';
 
 type Destination = 'inline' | 'gallery';
 type Layout = 'single' | 'side-by-side';
+type SourceTab = 'upload' | 'library';
 
 export interface InlineFigureInsert {
   layout: Layout;
   images: Array<{ src: string; alt?: string }>;
   caption?: string;
 }
+
+interface LibraryPhoto {
+  id: number;
+  image_url: string;
+  caption: string | null;
+}
+
+/** A slot can hold a freshly-picked local file (needs uploading) or an
+ *  already-hosted library photo (just reuse the URL, no upload needed). */
+type SlotValue =
+  | { kind: 'upload'; file: File; preview: string }
+  | { kind: 'library'; url: string; preview: string }
+  | null;
 
 interface InsertImageDialogProps {
   bookSlug: string;
@@ -29,7 +44,8 @@ interface InsertImageDialogProps {
  * Multi-step modal:
  *   1. Destination — inline vs gallery (skipped if !allowGallery)
  *   2. If inline → Layout — single or side-by-side
- *   3. Upload 1 or 2 images + optional caption
+ *   3. Fill each slot — either upload a new photo, or reuse one from
+ *      the book's photo library — plus an optional caption.
  *
  * Gallery items are always single images (the page gallery is a grid of
  * individual photos — no need to nest grids inside grids).
@@ -43,17 +59,42 @@ export default function InsertImageDialog({
   );
   const [layout, setLayout] = useState<Layout | null>(null);
 
-  // Files for each slot (1 for single, 2 for side-by-side)
-  const [files, setFiles] = useState<(File | null)[]>([null]);
-  const [previews, setPreviews] = useState<(string | null)[]>([null]);
+  // Slots for each image (1 for single, 2 for side-by-side)
+  const [slots, setSlots] = useState<SlotValue[]>([null]);
   const [caption, setCaption] = useState('');
 
+  const [sourceTab, setSourceTab] = useState<SourceTab>('upload');
   const [activeSlot, setActiveSlot] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Library photos (for this book), loaded lazily when the tab is opened.
+  const [libraryPhotos, setLibraryPhotos] = useState<LibraryPhoto[] | null>(null);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+
   const { upload, uploading, error, clearError } = useImageUpload({ folder: bookSlug });
+
+  const loadLibrary = useCallback(async () => {
+    if (libraryPhotos !== null || libraryLoading) return;
+    setLibraryLoading(true);
+    setLibraryError(null);
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from('photo_library')
+        .select('id, image_url, caption')
+        .eq('book_slug', bookSlug)
+        .order('created_at', { ascending: false });
+      if (fetchErr) throw fetchErr;
+      setLibraryPhotos(data ?? []);
+    } catch (err: any) {
+      setLibraryError(err?.message || 'Could not load your photo library.');
+      setLibraryPhotos([]);
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, [bookSlug, libraryPhotos, libraryLoading]);
 
   // ── Step helpers ─────────────────────────────────────────────
   const pickDestination = (d: Destination) => {
@@ -61,31 +102,33 @@ export default function InsertImageDialog({
     if (d === 'gallery') {
       // Gallery is always single
       setLayout('single');
-      setFiles([null]);
-      setPreviews([null]);
+      setSlots([null]);
     }
   };
 
   const pickLayout = (l: Layout) => {
     setLayout(l);
-    const slots = l === 'side-by-side' ? 2 : 1;
-    setFiles(Array(slots).fill(null));
-    setPreviews(Array(slots).fill(null));
+    const count = l === 'side-by-side' ? 2 : 1;
+    setSlots(Array(count).fill(null));
   };
 
   // ── File picking ─────────────────────────────────────────────
   const assignFile = (idx: number, file: File) => {
-    setFiles((prev) => {
+    setSlots((prev) => {
       const next = [...prev];
-      next[idx] = file;
-      return next;
-    });
-    setPreviews((prev) => {
-      const next = [...prev];
-      next[idx] = URL.createObjectURL(file);
+      next[idx] = { kind: 'upload', file, preview: URL.createObjectURL(file) };
       return next;
     });
     clearError();
+  };
+
+  const assignLibraryPhoto = (idx: number, photo: LibraryPhoto) => {
+    setSlots((prev) => {
+      const next = [...prev];
+      next[idx] = { kind: 'library', url: photo.image_url, preview: photo.image_url };
+      return next;
+    });
+    if (photo.caption && !caption) setCaption(photo.caption);
   };
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -106,23 +149,37 @@ export default function InsertImageDialog({
     fileInputRef.current?.click();
   };
 
+  const openSlotFor = (idx: number) => {
+    setActiveSlot(idx);
+    if (sourceTab === 'library') {
+      void loadLibrary();
+    } else {
+      openPicker(idx);
+    }
+  };
+
   // ── Submission ───────────────────────────────────────────────
-  const allFilesReady = files.every((f) => f !== null);
+  const allSlotsReady = slots.every((s) => s !== null);
 
   const handleInsert = async () => {
-    if (!destination || !allFilesReady) return;
+    if (!destination || !allSlotsReady) return;
     setSubmitting(true);
 
     try {
-      // Upload all selected files in parallel
-      const uploads = await Promise.all(
-        (files as File[]).map((f) => upload(f))
+      // Resolve each slot to a public URL — upload fresh files, reuse
+      // library URLs as-is (no upload needed).
+      const resolved = await Promise.all(
+        (slots as Exclude<SlotValue, null>[]).map(async (slot) => {
+          if (slot.kind === 'library') return slot.url;
+          const result = await upload(slot.file);
+          return result?.publicUrl ?? null;
+        })
       );
-      if (uploads.some((u) => !u)) {
+      if (resolved.some((u) => !u)) {
         setSubmitting(false);
         return;
       }
-      const urls = uploads.map((u) => u!.publicUrl);
+      const urls = resolved as string[];
 
       if (destination === 'inline' && layout) {
         onInsertInline({
@@ -232,32 +289,54 @@ export default function InsertImageDialog({
             </div>
           )}
 
-          {/* ── Step 3: upload + caption ────────────────────── */}
+          {/* ── Step 3: fill slots + caption ────────────────── */}
           {destination && layout && (
             <div>
-              <div className={`grid gap-3 mb-4 ${files.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                {files.map((file, idx) => {
-                  const preview = previews[idx];
+              {/* Source tabs */}
+              <div className="flex items-center gap-1 mb-3 p-1 bg-slate-100 rounded-full w-fit">
+                <button
+                  type="button"
+                  onClick={() => setSourceTab('upload')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-avenir transition-colors
+                    ${sourceTab === 'upload' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  <UploadCloud size={13} />
+                  Upload new
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSourceTab('library'); void loadLibrary(); }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-avenir transition-colors
+                    ${sourceTab === 'library' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  <Images size={13} />
+                  From your library
+                </button>
+              </div>
+
+              {/* Slot thumbnails (always visible so you can see what's picked so far) */}
+              <div className={`grid gap-3 mb-4 ${slots.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                {slots.map((slot, idx) => {
                   const isDragOver = dragOverSlot === idx;
                   return (
                     <div key={idx}>
-                      {preview ? (
+                      {slot ? (
                         <div className="relative rounded-xl overflow-hidden bg-slate-100">
-                          <img src={preview} alt="" className="w-full aspect-[4/3] object-cover" />
+                          <img src={slot.preview} alt="" className="w-full aspect-[4/3] object-cover" />
                           <button
                             type="button"
-                            onClick={() => openPicker(idx)}
+                            onClick={() => { setActiveSlot(idx); }}
                             className="absolute top-2 right-2 px-3 py-1.5 bg-white/90 backdrop-blur rounded-full text-xs font-avenir text-slate-700 hover:bg-white shadow"
                           >
                             Change
                           </button>
                         </div>
-                      ) : (
+                      ) : sourceTab === 'upload' ? (
                         <div
                           role="button"
                           tabIndex={0}
-                          onClick={() => openPicker(idx)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') openPicker(idx); }}
+                          onClick={() => openSlotFor(idx)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') openSlotFor(idx); }}
                           onDragOver={(e) => { e.preventDefault(); setDragOverSlot(idx); }}
                           onDragLeave={() => setDragOverSlot(null)}
                           onDrop={(e) => onDrop(idx, e)}
@@ -266,7 +345,20 @@ export default function InsertImageDialog({
                         >
                           <ImageIcon size={24} className="text-slate-400 mb-2" />
                           <p className="text-xs font-avenir text-slate-700">
-                            {files.length === 2 ? `Photo ${idx + 1}` : 'Drop or click'}
+                            {slots.length === 2 ? `Photo ${idx + 1}` : 'Drop or click'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setActiveSlot(idx)}
+                          className={`flex flex-col items-center justify-center aspect-[4/3] border-2 border-dashed rounded-xl cursor-pointer transition-colors
+                            ${activeSlot === idx ? 'border-amber-400 bg-amber-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}
+                        >
+                          <Images size={24} className="text-slate-400 mb-2" />
+                          <p className="text-xs font-avenir text-slate-700">
+                            {slots.length === 2 ? `Pick photo ${idx + 1} below` : 'Pick a photo below'}
                           </p>
                         </div>
                       )}
@@ -275,16 +367,48 @@ export default function InsertImageDialog({
                 })}
               </div>
 
-              {allFilesReady && (
+              {/* Library grid — shown when the "From your library" tab is active */}
+              {sourceTab === 'library' && (
+                <div className="mb-4 border border-slate-200 rounded-xl p-3 max-h-64 overflow-y-auto">
+                  {libraryLoading && (
+                    <p className="text-sm font-avenir text-slate-500 text-center py-6">Loading your photos…</p>
+                  )}
+                  {libraryError && (
+                    <p className="text-sm font-avenir text-red-700 text-center py-6">{libraryError}</p>
+                  )}
+                  {!libraryLoading && !libraryError && libraryPhotos?.length === 0 && (
+                    <p className="text-sm font-avenir text-slate-400 italic text-center py-6">
+                      No photos in your library yet. Upload some from the Photo Library panel, or use "Upload new" here.
+                    </p>
+                  )}
+                  {!libraryLoading && libraryPhotos && libraryPhotos.length > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {libraryPhotos.map((photo) => (
+                        <button
+                          key={photo.id}
+                          type="button"
+                          onClick={() => assignLibraryPhoto(activeSlot, photo)}
+                          className="relative aspect-square rounded-lg overflow-hidden border border-slate-200 hover:border-amber-400 transition-colors"
+                          title={photo.caption ?? ''}
+                        >
+                          <img src={photo.image_url} alt={photo.caption ?? ''} className="w-full h-full object-cover" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {slots.some((s) => s !== null) && (
                 <label className="block mb-3">
                   <span className="block text-xs font-avenir uppercase tracking-wider text-slate-500 mb-1.5">
-                    {destination === 'gallery' ? 'Caption' : (files.length === 2 ? 'Shared caption' : 'Caption')}
+                    {destination === 'gallery' ? 'Caption' : (slots.length === 2 ? 'Shared caption' : 'Caption')}
                   </span>
                   <input
                     type="text"
                     value={caption}
                     onChange={(e) => setCaption(e.target.value)}
-                    placeholder={files.length === 2 ? 'A caption that describes both photos' : 'Optional caption (shown below the image)'}
+                    placeholder={slots.length === 2 ? 'A caption that describes both photos' : 'Optional caption (shown below the image)'}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg font-lora text-slate-800 focus:ring-2 focus:ring-slate-300 focus:border-slate-300 outline-none"
                   />
                 </label>
@@ -297,7 +421,7 @@ export default function InsertImageDialog({
               <div className="flex justify-between items-center mt-5">
                 <button
                   onClick={() => {
-                    if (layout) { setLayout(null); setFiles([null]); setPreviews([null]); }
+                    if (layout) { setLayout(null); setSlots([null]); }
                     else if (allowGallery) setDestination(null);
                   }}
                   disabled={busy}
@@ -315,11 +439,11 @@ export default function InsertImageDialog({
                   </button>
                   <button
                     onClick={handleInsert}
-                    disabled={!allFilesReady || busy}
+                    disabled={!allSlotsReady || busy}
                     className="flex items-center gap-2 px-5 py-2 bg-slate-800 text-white rounded-full text-sm font-avenir hover:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   >
                     {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                    {busy ? 'Uploading…' : 'Insert'}
+                    {busy ? 'Working…' : 'Insert'}
                   </button>
                 </div>
               </div>
