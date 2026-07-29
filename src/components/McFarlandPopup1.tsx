@@ -58,7 +58,7 @@ export default function McFarlandPopup1({ onClose, onLearnMore }: McFarlandPopup
                     letterSpacing: '-0.02em',
                   }}
                 >
-                  KM
+                  !
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -66,14 +66,14 @@ export default function McFarlandPopup1({ onClose, onLearnMore }: McFarlandPopup
                     className="text-white font-avenir mb-1"
                     style={{ fontSize: '0.95rem', fontWeight: 600, letterSpacing: '0.01em' }}
                   >
-                    This book is free to read — here's why
+                    This book is free to read and create...
                   </p>
                   <p
                     className="font-lora leading-relaxed"
                     style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.72)', lineHeight: 1.6 }}
                   >
-                    Lasting Legacy Online is made possible by the generosity of the McFarland Living Trust —
-                    a gift from <span style={{ color: '#e8c96d' }}>Justice Kay McFarland</span>, Kansas Supreme
+                    Lasting Legacy Online is made possible by the generosity of the McFarland Chairtable Trust —
+                    a gift from <span style={{ color: '#e8c96d' }}>Chief Justice Kay McFarland</span>, Kansas Supreme
                     Court Justice and lifelong believer that every life deserves to be remembered.
                   </p>
                 </div>
