@@ -97,9 +97,9 @@ export default function PageEditView({
               <div className="flex items-center gap-2.5">
                 <LayoutGrid size={15} className="text-slate-400 shrink-0" />
                 <div>
-                  <p className="text-sm font-avenir text-slate-700 leading-tight">Gallery page</p>
+                  <p className="text-sm font-avenir text-slate-700 leading-tight">Make this a photo page</p>
                   <p className="text-xs text-slate-400 font-avenir mt-0.5">
-                    Show all photos as a full-width grid instead of the split layout
+                    This page will display as a full gallery of images with captions
                   </p>
                 </div>
               </div>
@@ -125,13 +125,15 @@ export default function PageEditView({
               </button>
             </div>
 
-            <GalleryEditor
-              pageId={page.id}
-              chapterId={chapter.id}
-              bookSlug={book.slug}
-              initialItems={galleryItems}
-              onChanged={onGalleryChanged}
-            />
+            {page.gallery_page && (
+              <GalleryEditor
+                pageId={page.id}
+                chapterId={chapter.id}
+                bookSlug={book.slug}
+                initialItems={galleryItems}
+                onChanged={onGalleryChanged}
+              />
+            )}
           </div>
         </>
       }
