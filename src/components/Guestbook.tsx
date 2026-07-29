@@ -29,7 +29,7 @@ export default function Guestbook({ book, entries, onPrevious, onNext }: Guestbo
         <div className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-3">
             <BookOpen className="w-8 h-8 text-slate-700" />
-            <h1 className="text-4xl font-bold text-slate-800 font-avenir">Guestbook</h1>
+            <h1 className="text-4xl font-bold text-slate-600 font-avenir">Guestbook</h1>
           </div>
           <div className="flex items-center gap-3">
             <button
