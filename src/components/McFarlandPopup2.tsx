@@ -107,7 +107,7 @@ export default function McFarlandPopup2({ onClose, onReadStory }: McFarlandPopup
                     letterSpacing: '-0.02em',
                   }}
                 >
-                  Moved by a life well lived?
+                  Moved by this story?
                 </h2>
 
                 {/* Body */}
@@ -117,11 +117,12 @@ export default function McFarlandPopup2({ onClose, onReadStory }: McFarlandPopup
                 >
                   <p>
                     The story you just read exists because someone believed it was worth preserving.
-                    Justice Kay McFarland — Kansas Supreme Court Justice and the first woman elected
-                    to statewide office in Kansas — held that same belief for every family.
+                    Chief Justice Kay McFarland, Kansas Supreme Court, the first female elected to a 
+                    judgeship in Kansas, believed this.
+                    
                   </p>
                   <p>
-                    Her generous gift through the McFarland Living Trust keeps Lasting Legacy Online
+                    Her generous gift through the McFarland Chairtable Trust keeps Lasting Legacy Online
                     free for everyone. Now you can read the remarkable story behind that generosity.
                   </p>
                 </div>
@@ -138,13 +139,9 @@ export default function McFarlandPopup2({ onClose, onReadStory }: McFarlandPopup
                     className="font-lora italic"
                     style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.82)', lineHeight: 1.65 }}
                   >
-                    "Every ordinary person has an extraordinary story worth keeping."
-                  </p>
-                  <p
-                    className="font-avenir mt-2"
-                    style={{ fontSize: '0.75rem', color: '#c9a84c', letterSpacing: '0.05em' }}
-                  >
-                    — Justice Kay McFarland
+                    Chief Justice McFarland understood the importance of living life to its fullest
+                    and commitment to service. Thanks to her Charitable Trust you can share your story 
+                    with the people you love. 
                   </p>
                 </div>
 
