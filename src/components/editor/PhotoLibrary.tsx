@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Download, Search, Images, Crop, Upload, Loader2, Trash2 } from 'lucide-react';
+import { X, Download, Search, Images, Crop, Upload, Loader2, Trash2, FolderInput } from 'lucide-react';
 import { supabase, Book, Chapter, Page, GalleryItem } from '../../lib/supabase';
 import { useImageUpload } from '../../hooks/useImageUpload';
 import CropModal from './CropModal';
@@ -89,6 +89,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
   const [saveError, setSaveError] = useState<string | null>(null);
   const [promoting, setPromoting] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [movingToLibrary, setMovingToLibrary] = useState(false);
   const [pages, setPages] = useState<Page[]>([]);
 
   // Bulk "upload to library" state
@@ -321,6 +322,46 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     if (editingImage?.source === 'library' && editingImage.id === img.id) closeEdit();
   };
 
+  // Move a page photo or gallery photo back into the unused library —
+  // frees up that slot (page's dedicated photo, or the gallery grid) for a
+  // different image, without deleting the photo itself.
+  const moveToLibrary = async (img: LibraryImage) => {
+    if (img.source !== 'page' && img.source !== 'gallery') return;
+    const ok = window.confirm(
+      "Move this photo to your unused library? It'll be cleared from where it's currently used, but stays available to pick again later — nothing is deleted."
+    );
+    if (!ok) return;
+
+    setMovingToLibrary(true);
+    setSaveError(null);
+    try {
+      const { error: insertError } = await supabase.from('photo_library').insert({
+        book_slug: book.slug,
+        image_url: img.url,
+        caption: img.caption || null,
+      });
+      if (insertError) throw insertError;
+
+      if (img.source === 'page') {
+        const { error } = await supabase
+          .from('pages')
+          .update({ image_url: null, image_caption: null })
+          .eq('id', img.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('gallery').delete().eq('id', img.id);
+        if (error) throw error;
+      }
+
+      await load();
+      closeEdit();
+    } catch (err: any) {
+      setSaveError(err?.message || 'Could not move this photo to the library. Please try again.');
+    } finally {
+      setMovingToLibrary(false);
+    }
+  };
+
   const filtered = images.filter((img) => {
     if (filterChapter && String(img.chapterId) !== filterChapter) return false;
     if (filterSource && img.source !== filterSource) return false;
@@ -547,6 +588,7 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
     editingImage?.source === 'page' ||
     editingImage?.source === 'library' ||
     (editingImage?.source === 'book' && editingImage.id === BOOK_INTRO_ID);
+  const canMoveToLibrary = editingImage?.source === 'page' || editingImage?.source === 'gallery';
 
   return (
     <AnimatePresence>
@@ -723,6 +765,15 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                               <Trash2 size={12} />
                             </button>
                           )}
+                          {(img.source === 'page' || img.source === 'gallery') && (
+                            <button
+                              onClick={() => moveToLibrary(img)}
+                              className="p-1 rounded border border-slate-200 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition-colors"
+                              title="Move to library (unused)"
+                            >
+                              <FolderInput size={12} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -801,6 +852,25 @@ export default function PhotoLibrary({ open, onClose, book, chapters }: PhotoLib
                         <div className="px-3 py-2 text-xs font-avenir text-slate-500 bg-slate-50 border border-slate-200 rounded-lg">
                           This photo is in your library but not used anywhere yet. Pick it from the "From your
                           library" tab next time you insert an inline image.
+                        </div>
+                      )}
+
+                      {canMoveToLibrary && (
+                        <div className="px-3 py-2 text-xs font-avenir text-slate-500 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between gap-3">
+                          <span>
+                            {editingImage!.source === 'page'
+                              ? "Free up this page's photo slot without deleting the photo."
+                              : 'Remove this photo from the gallery without deleting it.'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => moveToLibrary(editingImage!)}
+                            disabled={movingToLibrary}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-avenir font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 disabled:opacity-50 transition-colors shrink-0"
+                          >
+                            <FolderInput size={12} />
+                            {movingToLibrary ? 'Moving…' : 'Move to library'}
+                          </button>
                         </div>
                       )}
 
