@@ -25,6 +25,17 @@ export default function PageEditView({
 }: PageEditViewProps) {
   const needsCleanup = hasWordPressMarkup(page.content);
 
+  // If this page has no dedicated image_url, the reader's desktop split-view
+  // falls back to showing this page's first gallery photo in the left panel
+  // (see ChapterReader.tsx). Surface that same photo here so the editor
+  // reflects what readers actually see, instead of looking empty.
+  const sortedGalleryItems = [...galleryItems].sort(
+    (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
+  );
+  const fallbackImageUrl = !page.image_url && sortedGalleryItems.length > 0
+    ? sortedGalleryItems[0].image_url
+    : undefined;
+
   return (
     <SplitScreenLayout
       left={
@@ -35,6 +46,7 @@ export default function PageEditView({
           caption={page.image_caption}
           onCaptionChange={(v) => onChange({ image_caption: v })}
           placeholder="Add a photo for this page"
+          fallbackUrl={fallbackImageUrl}
         />
       }
       right={
