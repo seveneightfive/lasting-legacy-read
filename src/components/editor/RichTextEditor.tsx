@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -53,6 +53,12 @@ export default function RichTextEditor({
 }: RichTextEditorProps) {
   const [showImageDialog, setShowImageDialog] = useState(false);
 
+  // Tracks whether the next `value` prop change is just this editor's own
+  // edit echoing back through the parent's state, vs. a genuinely external
+  // change (switching pages, an undo elsewhere, etc). See the effect below
+  // for why this matters.
+  const isInternalUpdate = useRef(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -76,6 +82,7 @@ export default function RichTextEditor({
     ],
     content: sanitizeWordPressHtml(normalizeToHtml(value)),
     onUpdate: ({ editor }) => {
+      isInternalUpdate.current = true;
       onChange(editor.getHTML());
     },
     editorProps: {
@@ -92,6 +99,22 @@ export default function RichTextEditor({
 
   useEffect(() => {
     if (!editor) return;
+
+    // Skip re-syncing content that just came FROM this editor via onUpdate.
+    // `sanitizeWordPressHtml` runs unconditionally (not just on legacy
+    // content) and isn't perfectly idempotent with live editing — e.g. it
+    // strips the empty paragraph that Figure inserts after itself. If we
+    // always re-synced on every `value` change, that mismatch would look
+    // like an external edit and trigger a full `setContent()` reset right
+    // after every keystroke/insert — discarding the live editor state
+    // (cursor position, and in practice, content you just inserted, like
+    // an image that hadn't visually settled yet). Only re-sync when the
+    // change genuinely came from outside this editor instance.
+    if (isInternalUpdate.current) {
+      isInternalUpdate.current = false;
+      return;
+    }
+
     const incoming = sanitizeWordPressHtml(normalizeToHtml(value));
     if (editor.getHTML() !== incoming) {
       editor.commands.setContent(incoming, false);
