@@ -78,7 +78,6 @@ interface ExtractedFigure {
 function extractFigures(html: string): { text: string; figures: ExtractedFigure[] } {
   const figures: ExtractedFigure[] = [];
   const figureRegex = /<figure[^>]*>([\s\S]*?)<\/figure>/gi;
-  const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/gi;
   const captionRegex = /<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i;
 
   let match;
@@ -86,6 +85,12 @@ function extractFigures(html: string): { text: string; figures: ExtractedFigure[
     const figHtml = match[1];
     const srcs: string[] = [];
     let imgMatch;
+    // A fresh regex instance per figure — reusing one global regex across
+    // different figHtml strings left its lastIndex pointing into the
+    // *previous* figure's string, which could make .exec() on a later,
+    // shorter figHtml return null immediately and silently drop that
+    // figure's image(s) from the PDF.
+    const imgRegex = /<img[^>]+src="([^"]+)"[^>]*>/gi;
     while ((imgMatch = imgRegex.exec(figHtml)) !== null) {
       srcs.push(imgMatch[1]);
     }
