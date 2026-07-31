@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams } from 'react-router-dom';
-import { supabase, Book, Chapter } from './lib/supabase';
+import { Book, GuestbookEntry } from './lib/supabase';
+import { fetchBookReader, ChapterWithReaderData } from './lib/fetchBookReader';
 import BookReader from './components/BookReader';
 import EditorPage from './components/editor/EditorPage';
 
@@ -22,85 +23,61 @@ async function trackView(slug: string): Promise<void> {
 function BookPage() {
   const { slug } = useParams<{ slug: string }>();
   const [book, setBook] = useState<Book | null>(null);
-  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [chapters, setChapters] = useState<ChapterWithReaderData[]>([]);
+  const [guestbook, setGuestbook] = useState<GuestbookEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (slug) {
-      fetchBookAndChapters(slug);
+      loadBook(slug);
     }
   }, [slug]);
 
-const fetchBookAndChapters = async (bookSlug: string) => {
-  try {
-    setLoading(true);
-    console.log('Fetching book with slug:', bookSlug);
+  const loadBook = async (bookSlug: string) => {
+    try {
+      setLoading(true);
+      setError(null);
 
-    // Fetch book
-    const { data: bookData, error: bookError } = await supabase
-      .from('books')
-      .select('*')
-      .eq('slug', bookSlug)
-      .maybeSingle();
+      const payload = await fetchBookReader(bookSlug);
 
-    if (bookError) {
-      console.error('Book fetch error:', bookError);
-      throw bookError;
+      if (!payload) {
+        setBook(null);
+        setChapters([]);
+        setGuestbook([]);
+        return;
+      }
+
+      const bookData: Book = {
+        id: payload.id,
+        title: payload.title,
+        author: payload.author,
+        slug: payload.slug,
+        image_url: payload.cover_image_url ?? undefined,
+        dedication: payload.dedication ?? undefined,
+        intro: payload.intro ?? undefined,
+        intro_image_url: payload.intro_image_url,
+        intro_image_caption: payload.intro_image_caption,
+        filloutform_link: payload.filloutform_link ?? undefined,
+      };
+
+      // Drop chapters with no pages — same filter App.tsx used to do
+      // with N separate count() queries, now just an array filter
+      // since every chapter's pages already came down in the payload.
+      const chaptersWithPages = (payload.chapters ?? [])
+        .filter((c) => (c.pages?.length ?? 0) > 0);
+
+      setBook(bookData);
+      setChapters(chaptersWithPages);
+      setGuestbook(payload.guestbook ?? []);
+      trackView(bookSlug);
+    } catch (err) {
+      console.error('Error fetching book:', err);
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
     }
-
-    if (!bookData) {
-      console.log('Book not found for slug:', bookSlug);
-      setBook(null);
-      setChapters([]);
-      return;
-    }
-
-    console.log('Book data:', bookData);
-    setBook(bookData);
-    trackView(bookSlug);
-
-    // Fetch chapters — exclude soft-deleted rows
-    const { data: chaptersData, error: chaptersError } = await supabase
-      .from('chapters')
-      .select('*')
-      .eq('book_id', bookData.id)
-      .or('is_deleted.is.null,is_deleted.eq.false')
-      .order('number', { ascending: true });
-
-    if (chaptersError) {
-      console.error('Chapters fetch error:', chaptersError);
-      throw chaptersError;
-    }
-
-    console.log('Chapters data:', chaptersData);
-
-    // Filter chapters to only include those with at least one page
-    const chaptersWithPages = await Promise.all(
-      (chaptersData || []).map(async (chapter) => {
-        const { count } = await supabase
-          .from('pages')
-          .select('*', { count: 'exact', head: true })
-          .eq('chapter_id', chapter.id)
-          .or('is_deleted.is.null,is_deleted.eq.false');
-        return { chapter, hasPages: (count || 0) > 0 };
-      })
-    );
-
-    const filteredChapters = chaptersWithPages
-      .filter(({ hasPages }) => hasPages)
-      .map(({ chapter }) => chapter);
-
-    console.log('Filtered chapters with pages:', filteredChapters);
-    setChapters(filteredChapters);
-
-  } catch (err) {
-    console.error('Error fetching book:', err);
-    setError(err instanceof Error ? err.message : 'An error occurred');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   if (loading) {
     return (
@@ -126,7 +103,7 @@ const fetchBookAndChapters = async (bookSlug: string) => {
     );
   }
 
-  return <BookReader book={book} chapters={chapters} />;
+  return <BookReader book={book} chapters={chapters} initialGuestbook={guestbook} />;
 }
 
 function HomePage() {
