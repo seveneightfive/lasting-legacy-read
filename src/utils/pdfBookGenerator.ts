@@ -399,6 +399,10 @@ export async function downloadBookPDF(
 
   // ── CHAPTERS ─────────────────────────────────────────────────────────────
   for (const chapter of chaptersWithPages) {
+    // Belt-and-suspenders: skip a soft-deleted chapter even if it slipped
+    // through the fetch layer's filter (fetchCompleteBookData should already
+    // exclude these, but this keeps the generator itself safe on its own).
+    if ((chapter as { is_deleted?: boolean }).is_deleted) continue;
 
     // LEFT PAGE — full-bleed chapter image or cream placeholder
     newPage();
