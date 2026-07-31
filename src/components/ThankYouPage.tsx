@@ -1,20 +1,20 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, SquarePen as PenSquare } from 'lucide-react';
+import { ArrowLeft, ArrowRight, SquarePen as PenSquare } from 'lucide-react';
 import { Book } from '../lib/supabase';
 
 interface ThankYouPageProps {
   book: Book;
   onPrevious: () => void;
+  onNext: () => void;
+  onSignGuestbook: () => void;
 }
 
-export default function ThankYouPage({ book, onPrevious }: ThankYouPageProps) {
-  const handleGuestbookClick = () => {
-    if (book.filloutform_link) {
-      window.open(book.filloutform_link, '_blank', 'noopener,noreferrer');
-    }
-  };
-
+// Shown right after the story/gallery ends, BEFORE the Guestbook page —
+// this is the "please sign" prompt. Signing itself now happens in a popup
+// modal (GuestbookSignModal) so the reader never has to leave this screen,
+// and "Continue" moves them on into the full Guestbook page to see entries.
+export default function ThankYouPage({ book, onPrevious, onNext, onSignGuestbook }: ThankYouPageProps) {
   const logoUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/site-images/LLO-SiteLogo.png`;
 
   return (
@@ -58,29 +58,38 @@ export default function ThankYouPage({ book, onPrevious }: ThankYouPageProps) {
           Please let me know you were here.
         </motion.p>
 
-        {book.filloutform_link && (
-          <motion.button
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.8, duration: 0.6 }}
-            onClick={handleGuestbookClick}
-            className="inline-flex items-center gap-3 px-8 py-4 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-all hover:shadow-lg transform hover:scale-105 font-avenir font-semibold text-lg"
-          >
-            <PenSquare className="w-6 h-6" />
-            Sign My Guestbook
-          </motion.button>
-        )}
-
         <motion.button
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.8, duration: 0.6 }}
+          onClick={onSignGuestbook}
+          className="inline-flex items-center gap-3 px-8 py-4 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition-all hover:shadow-lg transform hover:scale-105 font-avenir font-semibold text-lg"
+        >
+          <PenSquare className="w-6 h-6" />
+          Sign My Guestbook
+        </motion.button>
+
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 1, duration: 0.6 }}
-          onClick={onPrevious}
-          className="mt-12 flex items-center gap-2 mx-auto text-slate-600 hover:text-slate-800 transition-colors font-avenir"
+          className="mt-12 flex items-center justify-center gap-6"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Gallery
-        </motion.button>
+          <button
+            onClick={onPrevious}
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-800 transition-colors font-avenir"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          <button
+            onClick={onNext}
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-800 transition-colors font-avenir"
+          >
+            View Guestbook
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </motion.div>
       </motion.div>
     </div>
   );
