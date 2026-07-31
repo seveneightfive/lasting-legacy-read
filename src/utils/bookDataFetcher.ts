@@ -29,10 +29,15 @@ export async function fetchCompleteBookData(bookId: number): Promise<BookWithFul
       return null;
     }
 
+    // Exclude soft-deleted chapters — mirrors the `c.is_deleted is not true`
+    // filter the reader's get_book_reader() SQL applies. Without this, a
+    // chapter the author deleted in the editor (invisible in the reader)
+    // would still print in the PDF export.
     const { data: chapters, error: chaptersError } = await supabase
       .from('chapters')
       .select('*')
       .eq('book_id', bookId)
+      .or('is_deleted.is.null,is_deleted.eq.false')
       .order('number', { ascending: true });
 
     if (chaptersError) {
