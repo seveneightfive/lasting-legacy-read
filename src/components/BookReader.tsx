@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { supabase, Book, Chapter, Page, GalleryItem, GuestbookEntry } from '../lib/supabase';
+import React, { useState, useEffect } from 'react';
+import { supabase, Book, GalleryItem, GuestbookEntry } from '../lib/supabase';
+import { ChapterWithReaderData } from '../lib/fetchBookReader';
 import BookCover from './BookCover';
 import BookDedication from './BookDedication';
 import BookIntro from './BookIntro';
@@ -13,11 +14,11 @@ import ThankYouPage from './ThankYouPage';
 import McFarlandPopup1 from './McFarlandPopup1';
 import McFarlandPopup2 from './McFarlandPopup2';
 import { useMcFarlandPopups } from '../hooks/useMcFarlandPopups';
-import { sortPagesForDisplay } from '../utils/pageOrder';
 
 interface BookReaderProps {
   book: Book;
-  chapters: Chapter[];
+  chapters: ChapterWithReaderData[];
+  initialGuestbook: GuestbookEntry[];
 }
 
 type ReadingState =
@@ -46,19 +47,16 @@ function hasContent(field: unknown): boolean {
   return Boolean(field);
 }
 
-export default function BookReader({ book, chapters }: BookReaderProps) {
+export default function BookReader({ book, chapters, initialGuestbook }: BookReaderProps) {
   const [currentState, setCurrentState] = useState<ReadingState>('cover');
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [pages, setPages] = useState<Page[]>([]);
-  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
-  const [chapterGalleryItems, setChapterGalleryItems] = useState<GalleryItem[]>([]);
 
-  // Page-level gallery items keyed by page id — used by ChapterReader for gallery pages
-  const [pageGalleryItems, setPageGalleryItems] = useState<GalleryItem[]>([]);
-
-  const [guestbookEntries, setGuestbookEntries] = useState<GuestbookEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Guestbook is the one thing that still needs a live refetch after
+  // writes (signing the guestbook inserts a row that wasn't in the
+  // original page-load payload). Everything else below is now derived
+  // — no loading state needed for it.
+  const [guestbookEntries, setGuestbookEntries] = useState<GuestbookEntry[]>(initialGuestbook);
   const [globalPageCount, setGlobalPageCount] = useState(0);
 
   const currentChapter = chapters[currentChapterIndex];
@@ -68,6 +66,18 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const hasDedication = hasContent(book.dedication);
   const hasIntro = hasContent(book.intro);
   const hasChapters = chapters.length > 0;
+
+  // All derived straight from the payload chapters already carry —
+  // no fetchPages/fetchGalleryItems/fetchChapterGalleryItems needed.
+  const pages = currentChapter?.pages ?? [];
+  const chapterGalleryItems: GalleryItem[] = currentChapter?.chapter_gallery ?? [];
+  const galleryItems: GalleryItem[] = chapters.flatMap((c) => c.chapter_gallery ?? []);
+  const pageGalleryItems: GalleryItem[] = pages[currentPageIndex]?.gallery_page
+    ? (pages[currentPageIndex] as any).gallery ?? []
+    : [];
+
+  const chapterHasGallery = (chapterIndex: number) =>
+    (chapters[chapterIndex]?.chapter_gallery?.length ?? 0) > 0;
 
   // Determines what the BookCover's page-turn flip should land on,
   // so the flip visually hands off into whatever screen comes next.
@@ -86,105 +96,15 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     isKayMcFarlandBook,
   });
 
-  const incrementPageCount = () => setGlobalPageCount(n => n + 1);
-
-  useEffect(() => {
-    if (currentState === 'chapter-content' && currentChapter) {
-      fetchPages(currentChapter.id);
-    }
-  }, [currentState, currentChapter]);
-
-  useEffect(() => {
-    if (currentState === 'gallery' && chapters.length > 0) {
-      fetchGalleryItems();
-    }
-  }, [currentState, chapters]);
-
-  useEffect(() => {
-    if (currentState === 'guestbook' && book.id) {
-      fetchGuestbookEntries();
-    }
-  }, [currentState, book.id]);
+  const incrementPageCount = () => setGlobalPageCount((n) => n + 1);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [currentState, currentPageIndex]);
 
-  const fetchPages = async (chapterId: number) => {
-    setLoading(true);
-    try {
-      const [pagesResult, chapterGalleryResult, pageGalleryResult] = await Promise.all([
-        supabase
-          .from('pages')
-          .select('*')
-          .eq('chapter_id', chapterId)
-          .or('is_deleted.is.null,is_deleted.eq.false'),
-        // Floating chapter-level gallery (no page_id) — used by ChapterSpecificGallery
-        supabase
-          .from('gallery')
-          .select('*')
-          .eq('chapter_id', chapterId)
-          .is('page_id', null)
-          .order('sort_order', { ascending: true }),
-        // Page-level gallery items — used by ChapterReader (including gallery pages)
-        supabase
-          .from('gallery')
-          .select('*')
-          .eq('chapter_id', chapterId)
-          .not('page_id', 'is', null)
-          .order('sort_order', { ascending: true }),
-      ]);
-
-      if (pagesResult.error) throw pagesResult.error;
-      setPages(sortPagesForDisplay(pagesResult.data || []));
-      setChapterGalleryItems(chapterGalleryResult.data || []);
-      setPageGalleryItems(pageGalleryResult.data || []);
-    } catch (error) {
-      console.error('Error fetching pages:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchGalleryItems = async () => {
-    setLoading(true);
-    try {
-      const chapterIds = chapters.map(ch => ch.id);
-      const { data, error } = await supabase
-        .from('gallery')
-        .select('*')
-        .in('chapter_id', chapterIds)
-        .order('sort_order', { ascending: true });
-      if (error) throw error;
-      setGalleryItems(data || []);
-    } catch (error) {
-      console.error('Error fetching gallery items:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchChapterGalleryItems = async (chapterId: number) => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('gallery')
-        .select('*')
-        .eq('chapter_id', chapterId)
-        .order('sort_order', { ascending: true });
-      if (error) throw error;
-      setChapterGalleryItems(data || []);
-    } catch (error) {
-      console.error('Error fetching chapter gallery items:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // FIX 1: query by book_id (reliable FK) and author_email (renamed from 'user').
-  // Also fetch ALL entries here — private filtering is handled in Guestbook.tsx display.
+  // Still a live query — guestbook entries are the one piece of state
+  // that changes via user action (signing) after the initial page load.
   const fetchGuestbookEntries = async () => {
-    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('guestbook')
@@ -195,27 +115,10 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       setGuestbookEntries(data || []);
     } catch (error) {
       console.error('Error fetching guestbook entries:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const checkChapterHasGallery = async (chapterId: number): Promise<boolean> => {
-    try {
-      const { count, error } = await supabase
-        .from('gallery')
-        .select('*', { count: 'exact', head: true })
-        .eq('chapter_id', chapterId)
-        .is('page_id', null);
-      if (error) throw error;
-      return (count || 0) > 0;
-    } catch (error) {
-      console.error('Error checking chapter gallery:', error);
-      return false;
-    }
-  };
-
-  const handleNext = async () => {
+  const handleNext = () => {
     if (currentState === 'cover' && !hasChapters) return;
 
     let advanced = false;
@@ -246,21 +149,17 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         if (currentPageIndex < pages.length - 1) {
           setCurrentPageIndex(currentPageIndex + 1);
           advanced = true;
+        } else if (chapterHasGallery(currentChapterIndex)) {
+          setCurrentState('chapter-gallery');
+          advanced = true;
+        } else if (currentChapterIndex < chapters.length - 1) {
+          setCurrentChapterIndex(currentChapterIndex + 1);
+          setCurrentPageIndex(0);
+          setCurrentState('chapter-title');
+          advanced = true;
         } else {
-          const chapterHasGallery = await checkChapterHasGallery(currentChapter.id);
-          if (chapterHasGallery) {
-            fetchChapterGalleryItems(currentChapter.id);
-            setCurrentState('chapter-gallery');
-            advanced = true;
-          } else if (currentChapterIndex < chapters.length - 1) {
-            setCurrentChapterIndex(currentChapterIndex + 1);
-            setCurrentPageIndex(0);
-            setCurrentState('chapter-title');
-            advanced = true;
-          } else {
-            setCurrentState('gallery');
-            advanced = true;
-          }
+          setCurrentState('gallery');
+          advanced = true;
         }
         break;
 
@@ -293,7 +192,7 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
     if (advanced) incrementPageCount();
   };
 
-  const handlePrevious = async () => {
+  const handlePrevious = () => {
     switch (currentState) {
       case 'dedication':
         setCurrentState('cover');
@@ -307,15 +206,8 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       case 'chapter-title':
         if (currentChapterIndex > 0) {
           const previousChapterIndex = currentChapterIndex - 1;
-          const previousChapterId = chapters[previousChapterIndex].id;
-          const previousHasGallery = await checkChapterHasGallery(previousChapterId);
           setCurrentChapterIndex(previousChapterIndex);
-          if (previousHasGallery) {
-            fetchChapterGalleryItems(previousChapterId);
-            setCurrentState('chapter-gallery');
-          } else {
-            setCurrentState('chapter-content');
-          }
+          setCurrentState(chapterHasGallery(previousChapterIndex) ? 'chapter-gallery' : 'chapter-content');
         } else if (hasIntro) {
           setCurrentState('intro');
         } else if (hasDedication) {
@@ -338,15 +230,8 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
       case 'gallery':
         if (hasChapters) {
           const lastChapterIndex = chapters.length - 1;
-          const lastChapterId = chapters[lastChapterIndex].id;
-          const lastHasGallery = await checkChapterHasGallery(lastChapterId);
           setCurrentChapterIndex(lastChapterIndex);
-          if (lastHasGallery) {
-            fetchChapterGalleryItems(lastChapterId);
-            setCurrentState('chapter-gallery');
-          } else {
-            setCurrentState('chapter-content');
-          }
+          setCurrentState(chapterHasGallery(lastChapterIndex) ? 'chapter-gallery' : 'chapter-content');
         }
         break;
 
@@ -378,14 +263,6 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
   const handleGoToKayStory = () => {
     window.location.href = '/book/kay-mcfarland';
   };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-slate-600 font-avenir text-lg">Loading...</div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -453,7 +330,6 @@ export default function BookReader({ book, chapters }: BookReaderProps) {
         <ChapterGallery galleryItems={galleryItems} onPrevious={handlePrevious} onNext={handleNext} />
       )}
 
-      {/* FIX 2: pass onEntryAdded so the list refreshes immediately after signing */}
       {currentState === 'guestbook' && (
         <Guestbook
           book={book}
