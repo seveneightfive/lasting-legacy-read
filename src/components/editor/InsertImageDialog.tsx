@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  X, Upload, Loader2, ImageIcon, AlignLeft, LayoutGrid,
+  X, Upload, Loader2, ImageIcon,
   Square, Columns, Images, UploadCloud,
 } from 'lucide-react';
 import { useImageUpload } from '../../hooks/useImageUpload';
@@ -32,31 +32,27 @@ type SlotValue =
 
 interface InsertImageDialogProps {
   bookSlug: string;
-  allowGallery: boolean;
   onCancel: () => void;
-  /** Called when user picks Inline. Receives a full figure spec. */
+  /** Called on Insert. Receives a full figure spec. */
   onInsertInline: (figure: InlineFigureInsert) => void;
-  /** Called when user picks Gallery (single image). */
-  onAddToGallery: (url: string, caption?: string) => Promise<void>;
 }
 
 /**
- * Multi-step modal:
- *   1. Destination — inline vs gallery (skipped if !allowGallery)
- *   2. If inline → Layout — single or side-by-side
- *   3. Fill each slot — either upload a new photo, or reuse one from
+ * Modal steps:
+ *   1. Layout — single or side-by-side
+ *   2. Fill each slot — either upload a new photo, or reuse one from
  *      the book's photo library — plus an optional caption.
  *
- * Gallery items are always single images (the page gallery is a grid of
- * individual photos — no need to nest grids inside grids).
+ * Gallery/photo-page images are handled elsewhere now (the "Make this a
+ * photo page" toggle) — this dialog only ever inserts inline figures.
  */
 export default function InsertImageDialog({
-  bookSlug, allowGallery, onCancel, onInsertInline, onAddToGallery,
+  bookSlug, onCancel, onInsertInline,
 }: InsertImageDialogProps) {
-  // Step state
-  const [destination, setDestination] = useState<Destination | null>(
-    allowGallery ? null : 'inline'
-  );
+  // destination is always 'inline' — kept as a tiny piece of state rather
+  // than a plain constant only so the rest of this file (written when a
+  // gallery destination also existed) didn't need a larger rewrite.
+  const [destination] = useState<Destination | null>('inline');
   const [layout, setLayout] = useState<Layout | null>(null);
 
   // Slots for each image (1 for single, 2 for side-by-side)
@@ -97,14 +93,6 @@ export default function InsertImageDialog({
   }, [bookSlug, libraryPhotos, libraryLoading]);
 
   // ── Step helpers ─────────────────────────────────────────────
-  const pickDestination = (d: Destination) => {
-    setDestination(d);
-    if (d === 'gallery') {
-      // Gallery is always single
-      setLayout('single');
-      setSlots([null]);
-    }
-  };
 
   const pickLayout = (l: Layout) => {
     setLayout(l);
@@ -181,15 +169,12 @@ export default function InsertImageDialog({
       }
       const urls = resolved as string[];
 
-      if (destination === 'inline' && layout) {
+      if (layout) {
         onInsertInline({
           layout,
           images: urls.map((src) => ({ src, alt: caption || undefined })),
           caption: caption || undefined,
         });
-      } else if (destination === 'gallery') {
-        // Gallery only supports single image
-        await onAddToGallery(urls[0], caption);
       }
     } finally {
       setSubmitting(false);
@@ -197,8 +182,7 @@ export default function InsertImageDialog({
   };
 
   const busy = uploading || submitting;
-  const showLayoutStep = destination === 'inline' && !layout && allowGallery;
-  const showSingleStepLayout = destination === 'inline' && !layout && !allowGallery;
+  const showLayoutStep = !layout;
 
   // ── Render ───────────────────────────────────────────────────
   return (
@@ -230,41 +214,12 @@ export default function InsertImageDialog({
             Insert image
           </h2>
           <p className="text-sm text-slate-500 font-avenir mb-5">
-            {!destination ? 'Where should this image go?' :
-             !layout && destination === 'inline' ? 'Choose a layout for the image(s).' :
-             destination === 'inline'
-               ? layout === 'side-by-side' ? 'Add two photos that will appear side by side.' : 'Add a photo to appear inline with the prose.'
-               : 'Add a photo to this page\u2019s gallery.'}
+            {!layout ? 'Choose a layout for the image(s).' :
+             layout === 'side-by-side' ? 'Add two photos that will appear side by side.' : 'Add a photo to appear inline with the prose.'}
           </p>
 
-          {/* ── Step 1: destination ──────────────────────────── */}
-          {!destination && allowGallery && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                onClick={() => pickDestination('inline')}
-                className="flex flex-col items-center text-center p-4 border border-slate-200 rounded-xl hover:border-slate-400 hover:bg-slate-50 transition-colors"
-              >
-                <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mb-2">
-                  <AlignLeft size={20} className="text-amber-700" />
-                </div>
-                <span className="font-avenir text-slate-800 mb-1">Inline in story</span>
-                <span className="text-xs text-slate-500 font-avenir">Mixed with the prose</span>
-              </button>
-              <button
-                onClick={() => pickDestination('gallery')}
-                className="flex flex-col items-center text-center p-4 border border-slate-200 rounded-xl hover:border-slate-400 hover:bg-slate-50 transition-colors"
-              >
-                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-2">
-                  <LayoutGrid size={20} className="text-slate-700" />
-                </div>
-                <span className="font-avenir text-slate-800 mb-1">Page gallery</span>
-                <span className="text-xs text-slate-500 font-avenir">Grid below the story</span>
-              </button>
-            </div>
-          )}
-
-          {/* ── Step 2: layout (inline only) ────────────────── */}
-          {(showLayoutStep || showSingleStepLayout) && (
+          {/* ── Step 2: layout ───────────────────────────────── */}
+          {showLayoutStep && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={() => pickLayout('single')}
@@ -402,7 +357,7 @@ export default function InsertImageDialog({
               {slots.some((s) => s !== null) && (
                 <label className="block mb-3">
                   <span className="block text-xs font-avenir uppercase tracking-wider text-slate-500 mb-1.5">
-                    {destination === 'gallery' ? 'Caption' : (slots.length === 2 ? 'Shared caption' : 'Caption')}
+                    {slots.length === 2 ? 'Shared caption' : 'Caption'}
                   </span>
                   <input
                     type="text"
@@ -420,11 +375,8 @@ export default function InsertImageDialog({
 
               <div className="flex justify-between items-center mt-5">
                 <button
-                  onClick={() => {
-                    if (layout) { setLayout(null); setSlots([null]); }
-                    else if (allowGallery) setDestination(null);
-                  }}
-                  disabled={busy}
+                  onClick={() => { setLayout(null); setSlots([null]); }}
+                  disabled={busy || !layout}
                   className="text-sm font-avenir text-slate-500 hover:text-slate-700 disabled:opacity-50"
                 >
                   ← Back
