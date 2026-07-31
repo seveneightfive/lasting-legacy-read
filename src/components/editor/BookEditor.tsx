@@ -180,7 +180,15 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
   const handleAddPage = useCallback(async (chapterId: number) => {
     if (!pagesByChapter.has(chapterId)) await loadPages(chapterId);
     const existing = pagesByChapter.get(chapterId) ?? [];
-    const nextFinalOrder = existing.length;
+    const newPageIndex = existing.length; // 0-based UI position of the appended page
+    // final_order is stored 1-indexed: the reader's get_book_reader() SQL uses
+    // coalesce(nullif(final_order, 0), sort_order) to fall back to the legacy
+    // sort_order for pages that have never been explicitly ordered (final_order
+    // left at its column default of 0). Writing a 0-indexed value here would let
+    // a page collide with that "untouched" sentinel and get silently reordered
+    // in the reader. Offsetting by +1 keeps 0 reserved exclusively for "never
+    // explicitly ordered".
+    const nextFinalOrder = newPageIndex + 1;
     const { data, error } = await supabase
       .from('pages')
       .insert({ chapter_id: chapterId, final_order: nextFinalOrder, is_deleted: false })
@@ -198,7 +206,7 @@ export default function BookEditor({ book, chapters: initialChapters, pin, onExi
       return next;
     });
     const chapterIndex = chapters.findIndex((c) => c.id === chapterId);
-    if (chapterIndex >= 0) setCurrent({ kind: 'page', chapterIndex, pageIndex: nextFinalOrder });
+    if (chapterIndex >= 0) setCurrent({ kind: 'page', chapterIndex, pageIndex: newPageIndex });
   }, [pagesByChapter, loadPages, chapters, book.id, logRevision]);
 
 const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
@@ -276,10 +284,12 @@ const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
     const toPages = pagesByChapter.get(toChapterId) ?? [];
     const pageToMove = fromPages.find((p) => p.id === pageId);
     if (!pageToMove) return;
-    const newFromPages = fromPages.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i }));
+    // final_order is 1-indexed — see the comment in handleAddPage for why 0
+    // must never be written as an explicit position.
+    const newFromPages = fromPages.filter((p) => p.id !== pageId).map((p, i) => ({ ...p, final_order: i + 1 }));
     const dest = toPages.filter((p) => p.id !== pageId);
     dest.splice(Math.min(toIndex, dest.length), 0, { ...pageToMove, chapter_id: toChapterId });
-    const newToPages = dest.map((p, i) => ({ ...p, final_order: i }));
+    const newToPages = dest.map((p, i) => ({ ...p, final_order: i + 1 }));
     setPagesByChapter((prev) => {
       const next = new Map(prev);
       next.set(fromChapterId, newFromPages);
@@ -287,7 +297,7 @@ const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
       return next;
     });
     try {
-      const movedNewOrder = newToPages.findIndex((p) => p.id === pageId);
+      const movedNewOrder = newToPages.find((p) => p.id === pageId)?.final_order ?? 1;
       const { error } = await supabase.from('pages').update({ chapter_id: toChapterId, final_order: movedNewOrder }).eq('id', pageId);
       if (error) throw error;
       void logRevision({ page_id: pageId, chapter_id: toChapterId, book_id: book.id, field: 'chapter_id', previous_value: String(fromChapterId), new_value: String(toChapterId) });
@@ -341,9 +351,10 @@ const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
     const { error: pageErr } = await supabase.from('pages').update({ is_deleted: true }).eq('id', pageId);
     if (pageErr) { console.error('Failed to delete page:', pageErr); window.alert('Could not delete this page. Please try again.'); return; }
     void logRevision({ page_id: pageId, chapter_id: chapterId, book_id: book.id, field: 'is_deleted', previous_value: 'false', new_value: 'true' });
+    // final_order is 1-indexed — see the comment in handleAddPage.
     const remaining = pagesInChapter
       .filter((p) => p.id !== pageId)
-      .map((p, i) => ({ ...p, final_order: i }));
+      .map((p, i) => ({ ...p, final_order: i + 1 }));
     await Promise.all(
       remaining
         .filter((p) => { const before = pagesInChapter.find((x) => x.id === p.id); return before?.final_order !== p.final_order; })
@@ -372,7 +383,9 @@ const handleAddChapter = useCallback(async (payload: NewChapterPayload) => {
     const reordered = [...existing];
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
-    const renumbered = reordered.map((p, i) => ({ ...p, final_order: i }));
+    // final_order is 1-indexed — see the comment in handleAddPage for why the
+    // top position must be written as 1, never 0.
+    const renumbered = reordered.map((p, i) => ({ ...p, final_order: i + 1 }));
     setPagesByChapter((prev) => { const next = new Map(prev); next.set(chapterId, renumbered); return next; });
     const changed = renumbered.filter((p) => {
       const before = existing.find((x) => x.id === p.id);
