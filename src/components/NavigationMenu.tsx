@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, SquarePen as PenSquare, Download, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
-import { supabase, Book, Chapter, Page } from '../lib/supabase';
+import { Book, Page } from '../lib/supabase';
+import { ChapterWithReaderData } from '../lib/fetchBookReader';
 import { fetchCompleteBookData } from '../utils/bookDataFetcher';
 import { downloadBookPDF } from '../utils/pdfBookGenerator';
 import { sortPagesForDisplay } from '../utils/pageOrder';
@@ -10,7 +11,7 @@ const EDGE_FN    = 'https://uhzncrsbytxwdlmldwqf.supabase.co/functions/v1/story-
 
 interface NavigationMenuProps {
   book: Book;
-  chapters: Chapter[];
+  chapters: ChapterWithReaderData[];
   currentChapterIndex: number;
   currentPageIndex?: number;
   currentState: string;
@@ -44,10 +45,10 @@ export default function NavigationMenu({
   const [pinError, setPinError] = useState('');
   const [pinLoading, setPinLoading] = useState(false);
 
-  // ── TOC expansion + page cache ───────────────────────────────
+  // ── TOC expansion only — pages come straight from the `chapters`
+  // prop now (already fetched once by the get_book_reader RPC), so
+  // there's no per-chapter loading state or cache to manage anymore.
   const [expandedChapters, setExpandedChapters] = useState<Record<number, boolean>>({});
-  const [pagesByChapter, setPagesByChapter] = useState<Record<number, Page[]>>({});
-  const [loadingPagesFor, setLoadingPagesFor] = useState<Set<number>>(new Set());
 
   const logoUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/site-images/LLO-SiteLogo.png`;
 
@@ -71,45 +72,8 @@ export default function NavigationMenu({
     );
   };
 
-  useEffect(() => {
-    if (isOpen && currentState.includes('chapter') && chapters[currentChapterIndex]) {
-      const activeId = chapters[currentChapterIndex].id;
-      setExpandedChapters(prev => (prev[activeId] ? prev : { ...prev, [activeId]: true }));
-      if (!pagesByChapter[activeId]) {
-        void loadPagesForChapter(activeId);
-      }
-    }
-  }, [isOpen, currentChapterIndex, currentState, chapters]);
-
- const loadPagesForChapter = async (chapterId: number) => {
-  if (pagesByChapter[chapterId] || loadingPagesFor.has(chapterId)) return;
-  setLoadingPagesFor(prev => new Set(prev).add(chapterId));
-  try {
-    const { data, error } = await supabase
-      .from('pages')
-      .select('*')
-      .eq('chapter_id', chapterId)
-      .or('is_deleted.is.null,is_deleted.eq.false');
-    if (error) throw error;
-    setPagesByChapter(prev => ({ ...prev, [chapterId]: sortPagesForDisplay(data || []) }));
-  } catch (error) {
-    console.error('Error loading pages for chapter:', error);
-    setPagesByChapter(prev => ({ ...prev, [chapterId]: [] }));
-  } finally {
-    setLoadingPagesFor(prev => {
-      const next = new Set(prev);
-      next.delete(chapterId);
-      return next;
-    });
-  }
-};
-  
   const toggleChapterExpansion = (chapterId: number) => {
-    const willExpand = !expandedChapters[chapterId];
-    setExpandedChapters(prev => ({ ...prev, [chapterId]: willExpand }));
-    if (willExpand && !pagesByChapter[chapterId]) {
-      void loadPagesForChapter(chapterId);
-    }
+    setExpandedChapters((prev) => ({ ...prev, [chapterId]: !prev[chapterId] }));
   };
 
   const handleTitleClick = () => {
@@ -144,37 +108,37 @@ export default function NavigationMenu({
   };
 
   const handleDownloadPDF = async () => {
-  try {
-    setIsGeneratingPDF(true);
-    setPdfProgress(0);
-    setPdfError(null);
+    try {
+      setIsGeneratingPDF(true);
+      setPdfProgress(0);
+      setPdfError(null);
 
-    const bookData = await fetchCompleteBookData(book.id);
-    if (!bookData) throw new Error('Failed to fetch book data');
+      const bookData = await fetchCompleteBookData(book.id);
+      if (!bookData) throw new Error('Failed to fetch book data');
 
-    setPdfProgress(15); // data fetched
+      setPdfProgress(15); // data fetched
 
-    const chaptersWithPages = bookData.chapters.map((ch) => ({
-      ...ch,
-      pages: sortPagesForDisplay(ch.pages),
-    }));
+      const chaptersWithPages = bookData.chapters.map((ch) => ({
+        ...ch,
+        pages: sortPagesForDisplay(ch.pages),
+      }));
 
-    await downloadBookPDF(
-      bookData.book,
-      chaptersWithPages,
-      (pct) => setPdfProgress(pct)   // ← live progress
-    );
+      await downloadBookPDF(
+        bookData.book,
+        chaptersWithPages,
+        (pct) => setPdfProgress(pct)   // ← live progress
+      );
 
-    setIsGeneratingPDF(false);
-    setPdfProgress(0);
-  } catch (error) {
-    console.error('Error generating PDF:', error);
-    setPdfError('Failed to generate PDF. Please try again.');
-    setIsGeneratingPDF(false);
-    setPdfProgress(0);
-  }
-};
-  
+      setIsGeneratingPDF(false);
+      setPdfProgress(0);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      setPdfError('Failed to generate PDF. Please try again.');
+      setIsGeneratingPDF(false);
+      setPdfProgress(0);
+    }
+  };
+
   const openPinModal = () => {
     setPin('');
     setPinError('');
@@ -298,8 +262,7 @@ export default function NavigationMenu({
                 <nav className="space-y-1">
                   {chapters.map((chapter, chapterIndex) => {
                     const isExpanded = !!expandedChapters[chapter.id];
-                    const pages = pagesByChapter[chapter.id] || [];
-                    const isLoading = loadingPagesFor.has(chapter.id);
+                    const pages = chapter.pages ?? [];
                     const active = isChapterActive(chapterIndex);
 
                     return (
@@ -344,19 +307,13 @@ export default function NavigationMenu({
                               className="overflow-hidden"
                             >
                               <div className="ml-6 mt-1 mb-2 border-l border-slate-200 pl-3 space-y-0.5">
-                                {isLoading && (
-                                  <div className="py-2 text-xs text-slate-400 font-avenir italic">
-                                    Loading pages…
-                                  </div>
-                                )}
-
-                                {!isLoading && pages.length === 0 && (
+                                {pages.length === 0 && (
                                   <div className="py-2 text-xs text-slate-400 font-avenir italic">
                                     No pages yet
                                   </div>
                                 )}
 
-                                {!isLoading && pages.map((page, pageIndex) => {
+                                {pages.map((page, pageIndex) => {
                                   const isCurrentPage =
                                     currentState === 'chapter-content' &&
                                     currentChapterIndex === chapterIndex &&
@@ -412,6 +369,15 @@ export default function NavigationMenu({
               </div>
 
               <div className="p-6 border-t border-slate-200 space-y-3">
+                <a
+                  href="https://lastinglegacyonline.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full max-w-[140px] mx-auto mb-1 hover:opacity-80 transition-opacity"
+                >
+                  <img src={logoUrl} alt="Lasting Legacy Online" className="w-full" />
+                </a>
+
                 <button
                   onClick={openPinModal}
                   className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-white border-2 border-slate-800 text-slate-800 rounded-lg hover:bg-slate-50 transition-colors font-avenir font-medium"
@@ -451,15 +417,6 @@ export default function NavigationMenu({
                     Sign My Guestbook
                   </button>
                 )}
-
-                <a
-                  href="https://lastinglegacyonline.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block w-full max-w-[200px] mx-auto hover:opacity-80 transition-opacity"
-                >
-                  <img src={logoUrl} alt="Site Logo" className="w-full" />
-                </a>
               </div>
             </motion.div>
           </>
