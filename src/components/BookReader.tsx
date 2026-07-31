@@ -11,9 +11,12 @@ import ChapterSpecificGallery from './ChapterSpecificGallery';
 import NavigationMenu from './NavigationMenu';
 import Guestbook from './Guestbook';
 import ThankYouPage from './ThankYouPage';
+import GuestbookSignModal from './GuestbookSignModal';
+import ExitIntentPopup from './ExitIntentPopup';
 import McFarlandPopup1 from './McFarlandPopup1';
 import McFarlandPopup2 from './McFarlandPopup2';
 import { useMcFarlandPopups } from '../hooks/useMcFarlandPopups';
+import { useExitIntent } from '../hooks/useExitIntent';
 
 interface BookReaderProps {
   book: Book;
@@ -29,8 +32,8 @@ type ReadingState =
   | 'chapter-content'
   | 'chapter-gallery'
   | 'gallery'
-  | 'guestbook'
-  | 'thank-you';
+  | 'thank-you'
+  | 'guestbook';
 
 const KAY_MCFARLAND_SLUG = 'kay-mcfarland';
 const POPUP1_TRIGGER_PAGE = 4;
@@ -51,27 +54,23 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
   const [currentState, setCurrentState] = useState<ReadingState>('cover');
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [showGuestbookModal, setShowGuestbookModal] = useState(false);
 
-  // Guestbook is the one thing that still needs a live refetch after
-  // writes (signing the guestbook inserts a row that wasn't in the
-  // original page-load payload). Everything else below is now derived
-  // — no loading state needed for it.
   const [guestbookEntries, setGuestbookEntries] = useState<GuestbookEntry[]>(initialGuestbook);
   const [globalPageCount, setGlobalPageCount] = useState(0);
 
   const currentChapter = chapters[currentChapterIndex];
-  const isAtEnd = currentState === 'guestbook' || currentState === 'thank-you';
+  const isAtEnd = currentState === 'thank-you' || currentState === 'guestbook';
   const isKayMcFarlandBook = book.slug === KAY_MCFARLAND_SLUG || book.user === KAY_MCFARLAND_SLUG;
 
   const hasDedication = hasContent(book.dedication);
   const hasIntro = hasContent(book.intro);
   const hasChapters = chapters.length > 0;
 
-  // All derived straight from the payload chapters already carry —
-  // no fetchPages/fetchGalleryItems/fetchChapterGalleryItems needed.
   const pages = currentChapter?.pages ?? [];
   const chapterGalleryItems: GalleryItem[] = currentChapter?.chapter_gallery ?? [];
   const galleryItems: GalleryItem[] = chapters.flatMap((c) => c.chapter_gallery ?? []);
+  const hasFinalGallery = galleryItems.length > 0;
   const pageGalleryItems: GalleryItem[] = pages[currentPageIndex]?.gallery_page
     ? (pages[currentPageIndex] as any).gallery ?? []
     : [];
@@ -79,16 +78,14 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
   const chapterHasGallery = (chapterIndex: number) =>
     (chapters[chapterIndex]?.chapter_gallery?.length ?? 0) > 0;
 
-  // Determines what the BookCover's page-turn flip should land on,
-  // so the flip visually hands off into whatever screen comes next.
   const firstChapterHasImage = Boolean(chapters[0]?.image_url);
   const coverNextBg = hasDedication
-    ? 'linear-gradient(to bottom right, #0f172a, #334155)' // matches BookDedication's right panel
+    ? 'linear-gradient(to bottom right, #0f172a, #334155)'
     : hasIntro
-      ? '#f8fafc' // slate-50 — matches BookIntro's background
+      ? '#f8fafc'
       : firstChapterHasImage
         ? '#0f172a'
-        : '#1e293b'; // matches ChapterTitle's plain (no image) background
+        : '#1e293b';
 
   const { showPopup1, showPopup2, dismissPopup1, dismissPopup2 } = useMcFarlandPopups({
     globalPageCount,
@@ -96,14 +93,16 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
     isKayMcFarlandBook,
   });
 
+  // Exit-intent popup — skip it once the reader has already reached the
+  // end screens, since those already carry their own calls to action.
+  const { showExitIntent, dismissExitIntent } = useExitIntent(!isAtEnd);
+
   const incrementPageCount = () => setGlobalPageCount((n) => n + 1);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [currentState, currentPageIndex]);
 
-  // Still a live query — guestbook entries are the one piece of state
-  // that changes via user action (signing) after the initial page load.
   const fetchGuestbookEntries = async () => {
     try {
       const { data, error } = await supabase
@@ -158,7 +157,7 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
           setCurrentState('chapter-title');
           advanced = true;
         } else {
-          setCurrentState('gallery');
+          setCurrentState(hasFinalGallery ? 'gallery' : 'thank-you');
           advanced = true;
         }
         break;
@@ -170,22 +169,22 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
           setCurrentState('chapter-title');
           advanced = true;
         } else {
-          setCurrentState('gallery');
+          setCurrentState(hasFinalGallery ? 'gallery' : 'thank-you');
           advanced = true;
         }
         break;
 
       case 'gallery':
-        setCurrentState('guestbook');
-        advanced = true;
-        break;
-
-      case 'guestbook':
         setCurrentState('thank-you');
         advanced = true;
         break;
 
       case 'thank-you':
+        setCurrentState('guestbook');
+        advanced = true;
+        break;
+
+      case 'guestbook':
         break;
     }
 
@@ -236,11 +235,17 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
         break;
 
       case 'thank-you':
-        setCurrentState('guestbook');
+        if (hasFinalGallery) {
+          setCurrentState('gallery');
+        } else if (hasChapters) {
+          const lastChapterIndex = chapters.length - 1;
+          setCurrentChapterIndex(lastChapterIndex);
+          setCurrentState(chapterHasGallery(lastChapterIndex) ? 'chapter-gallery' : 'chapter-content');
+        }
         break;
 
       case 'guestbook':
-        setCurrentState('gallery');
+        setCurrentState('thank-you');
         break;
     }
   };
@@ -259,6 +264,7 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
 
   const handleNavigateToGallery = () => setCurrentState('gallery');
   const handleNavigateToGuestbook = () => setCurrentState('guestbook');
+  const handleOpenGuestbookModal = () => setShowGuestbookModal(true);
 
   const handleGoToKayStory = () => {
     window.location.href = '/book/kay-mcfarland';
@@ -276,6 +282,8 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
         onNavigateToPage={handleNavigateToPage}
         onNavigateToGallery={handleNavigateToGallery}
         onNavigateToGuestbook={handleNavigateToGuestbook}
+        onSignGuestbook={handleOpenGuestbookModal}
+        hasGallery={hasFinalGallery}
       />
 
       {currentState === 'cover' && (
@@ -326,8 +334,17 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
         />
       )}
 
-      {currentState === 'gallery' && (
+      {currentState === 'gallery' && hasFinalGallery && (
         <ChapterGallery galleryItems={galleryItems} onPrevious={handlePrevious} onNext={handleNext} />
+      )}
+
+      {currentState === 'thank-you' && (
+        <ThankYouPage
+          book={book}
+          onPrevious={handlePrevious}
+          onNext={handleNext}
+          onSignGuestbook={handleOpenGuestbookModal}
+        />
       )}
 
       {currentState === 'guestbook' && (
@@ -340,9 +357,14 @@ export default function BookReader({ book, chapters, initialGuestbook }: BookRea
         />
       )}
 
-      {currentState === 'thank-you' && (
-        <ThankYouPage book={book} onPrevious={handlePrevious} />
-      )}
+      <GuestbookSignModal
+        open={showGuestbookModal}
+        book={book}
+        onClose={() => setShowGuestbookModal(false)}
+        onEntryAdded={fetchGuestbookEntries}
+      />
+
+      {showExitIntent && <ExitIntentPopup onClose={dismissExitIntent} />}
 
       {showPopup1 && (
         <McFarlandPopup1
