@@ -48,7 +48,11 @@ export default function RichTextEditor({
   contentClassName,
   hideToolbar = false,
   bookSlug,
-  onAddToGallery,
+  // Accepted for prop-compatibility with existing callers (PageEditView →
+  // BookEditor's handleAddToGallery), but no longer used here: the
+  // InsertImageDialog's gallery destination was retired — the only way to
+  // build a page gallery now is the "Make this a photo page" toggle.
+  onAddToGallery: _onAddToGallery,
   stickyToolbar = false,
 }: RichTextEditorProps) {
   const [showImageDialog, setShowImageDialog] = useState(false);
@@ -131,10 +135,6 @@ export default function RichTextEditor({
     }).run();
   };
 
-  const handleAddToGallery = async (url: string, caption?: string) => {
-    if (onAddToGallery) await onAddToGallery(url, caption);
-  };
-
   return (
     <div className="rich-text-editor">
       {!hideToolbar && (
@@ -157,14 +157,9 @@ export default function RichTextEditor({
       {showImageDialog && bookSlug && (
         <InsertImageDialog
           bookSlug={bookSlug}
-          allowGallery={!!onAddToGallery}
           onCancel={() => setShowImageDialog(false)}
           onInsertInline={(figure) => {
             handleInsertInlineFigure(figure);
-            setShowImageDialog(false);
-          }}
-          onAddToGallery={async (url, caption) => {
-            await handleAddToGallery(url, caption);
             setShowImageDialog(false);
           }}
         />
